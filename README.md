@@ -40,6 +40,11 @@ Rode o código abaixo para iniciar a compilação para um ".exe":
 
     python -m PyInstaller --clean --onedir --windowed --name AuditoriaPlanilhas --collect-all streamlit --add-data "app_corrigido.py;." launcher.py
 
+
+Em seguida, rode o seguinte código no terminal para que o código seja executado na porta 3000 do seu localhost
+
+    .\dist\AuditoriaPlanilhas\AuditoriaPlanilhas.exe
+
 ---
 
 Após o processo finalizar, a estrutura do projeto deverá estar nesse formato:

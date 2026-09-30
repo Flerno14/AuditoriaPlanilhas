@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
 
 
 # ============================================================
@@ -324,11 +325,13 @@ def gerar_arquivo_corrigido(
     decisoes: pd.DataFrame,
     sheet_name: str,
     nome_arquivo_original: str,
+    incluir_linhas_novas: bool = True,
+    marcar_alteracoes_laranja: bool = False,
 ) -> tuple[bytes, int, int]:
     """
     Cria uma cópia do Arquivo 1, aplica as decisões do usuário e
     adiciona automaticamente ao final as linhas que existem somente
-    no Arquivo 2.
+    no Arquivo 2, quando incluir_linhas_novas for True.
 
     Retorna:
         bytes do arquivo corrigido
@@ -415,10 +418,18 @@ def gerar_arquivo_corrigido(
                 valores_arquivo_2[chave]
             )
 
-            worksheet.cell(
+            celula = worksheet.cell(
                 row=linha_excel,
                 column=mapa_colunas[nome_coluna],
-            ).value = novo_valor
+            )
+            valor_anterior = normalizar_valor_excel(celula.value)
+            celula.value = novo_valor
+
+            if marcar_alteracoes_laranja and valor_anterior != novo_valor:
+                celula.fill = PatternFill(
+                    fill_type="solid",
+                    fgColor="FFFFA500",
+                )
 
             quantidade_alteracoes += 1
 
@@ -434,7 +445,7 @@ def gerar_arquivo_corrigido(
             quantidade_linhas_arquivo_2 - quantidade_linhas_arquivo_1,
         )
 
-        if quantidade_linhas_novas > 0:
+        if incluir_linhas_novas and quantidade_linhas_novas > 0:
 
             # Os dados começam na linha 2, pois a linha 1 é o cabeçalho.
             primeira_linha_nova = quantidade_linhas_arquivo_1 + 2
@@ -470,6 +481,9 @@ def gerar_arquivo_corrigido(
                         row=linha_excel,
                         column=coluna_excel,
                     ).value = normalizar_valor_excel(valor)
+
+        if not incluir_linhas_novas:
+            quantidade_linhas_novas = 0
 
         saida = BytesIO()
         workbook.save(saida)
@@ -677,6 +691,10 @@ id_comparacao = gerar_id_comparacao(
 )
 
 chave_tabela = f"tabela_diferencas_{id_comparacao}"
+chave_dados_tabela = f"dados_{chave_tabela}"
+chave_versao_tabela = f"versao_{chave_tabela}"
+st.session_state.setdefault(chave_dados_tabela, tabela_inicial.copy())
+st.session_state.setdefault(chave_versao_tabela, 0)
 
 
 # ============================================================
@@ -684,6 +702,21 @@ chave_tabela = f"tabela_diferencas_{id_comparacao}"
 # ============================================================
 
 if not tabela_inicial.empty:
+
+    col_status_global, col_aplicar_global = st.columns([2, 1])
+    with col_status_global:
+        status_para_todos = st.selectbox(
+            "Aplicar decisão a todas as diferenças",
+            options=["Manter Arquivo 1", "Usar Arquivo 2", "Pendente"],
+            key=f"status_todos_{id_comparacao}",
+        )
+    with col_aplicar_global:
+        st.markdown("\u00a0")
+        if st.button("Aplicar a todos", key=f"aplicar_status_todos_{id_comparacao}"):
+            tabela_com_status_global = tabela_inicial.copy()
+            tabela_com_status_global["Decisão"] = status_para_todos
+            st.session_state[chave_dados_tabela] = tabela_com_status_global
+            st.session_state[chave_versao_tabela] += 1
 
     st.markdown(
         """
@@ -702,8 +735,8 @@ if not tabela_inicial.empty:
     )
 
     tabela_editada = st.data_editor(
-        tabela_inicial,
-        key=chave_tabela,
+        st.session_state[chave_dados_tabela],
+        key=f"{chave_tabela}_{st.session_state[chave_versao_tabela]}",
         hide_index=True,
         width="stretch",
         height=650,
@@ -810,7 +843,7 @@ with m4:
 # RESUMO E BOTÃO
 # ============================================================
 
-col_resumo, col_botao = st.columns([3, 2])
+col_resumo, col_exportar, col_botao = st.columns([3, 2, 2])
 
 with col_resumo:
     st.markdown(
@@ -828,6 +861,101 @@ with col_resumo:
         Inclusões automáticas: **{quantidade_linhas_novas} linha(s)**
         """
     )
+
+with col_exportar:
+    if not tabela_editada.empty:
+        arquivo_diferencas = BytesIO()
+        with pd.ExcelWriter(arquivo_diferencas, engine="openpyxl") as writer:
+            tabela_editada.to_excel(
+                writer,
+                index=False,
+                sheet_name="Diferenças",
+            )
+
+        st.download_button(
+            label="📥 EXPORTAR DIFERENÇAS",
+            data=arquivo_diferencas.getvalue(),
+            file_name="diferencas_entre_arquivos.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"exportar_diferencas_{id_comparacao}",
+        )
+
+        arquivo_escolhas = BytesIO()
+        if quantidade_pendente == 0:
+            mudancas_aplicadas = tabela_editada.apply(
+                lambda linha: (
+                    linha["Valor no Arquivo 2"]
+                    if linha["Decisão"] == "Usar Arquivo 2"
+                    else linha["Valor no Arquivo 1"]
+                ),
+                axis=1,
+            )
+            tabela_escolhas = pd.DataFrame(
+                {
+                    "Linha": tabela_editada["Índice/Linha"],
+                    "Coluna": tabela_editada["Nome da Coluna"],
+                    "Mudanças Aplicadas": mudancas_aplicadas,
+                }
+            )
+            with pd.ExcelWriter(arquivo_escolhas, engine="openpyxl") as writer:
+                tabela_escolhas.to_excel(
+                    writer,
+                    index=False,
+                    sheet_name="Conteúdo escolhido",
+                )
+
+        st.download_button(
+            label="📥 EXPORTAR ESCOLHAS",
+            data=arquivo_escolhas.getvalue(),
+            file_name="mudancas_aplicadas.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            disabled=quantidade_pendente > 0,
+            help=(
+                "Escolha uma opção para todas as diferenças antes de exportar."
+                if quantidade_pendente > 0
+                else "Exporta linha, coluna e conteúdo selecionado para cada diferença."
+            ),
+            key=f"exportar_escolhas_{id_comparacao}",
+        )
+
+        arquivo_apenas_alteracoes = None
+        if quantidade_pendente == 0:
+            arquivo_apenas_alteracoes, _, _ = gerar_arquivo_corrigido(
+                arquivo_1_bytes=arquivo_1_bytes,
+                arquivo_2_bytes=arquivo_2_bytes,
+                relatorio_original=relatorio,
+                decisoes=tabela_editada,
+                sheet_name=sheet_name,
+                nome_arquivo_original=arquivo_1.name,
+                incluir_linhas_novas=False,
+                marcar_alteracoes_laranja=True,
+            )
+
+        nome_apenas_alteracoes = (
+            Path(arquivo_1.name).stem
+            + "_somente_alteracoes"
+            + Path(arquivo_1.name).suffix
+        )
+        st.download_button(
+            label="📥 EXPORTAR ARQUIVO 1 ALTERADO",
+            data=arquivo_apenas_alteracoes or b"",
+            file_name=nome_apenas_alteracoes,
+            mime=(
+                "application/vnd.ms-excel.sheet.macroEnabled.12"
+                if Path(arquivo_1.name).suffix.lower() == ".xlsm"
+                else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            use_container_width=True,
+            disabled=quantidade_pendente > 0,
+            help=(
+                "Resolve todas as decisões para exportar."
+                if quantidade_pendente > 0
+                else "Exporta uma cópia do Arquivo 1 com as células escolhidas como 'Usar Arquivo 2'. Não inclui linhas novas."
+            ),
+            key=f"exportar_arquivo1_alterado_{id_comparacao}",
+        )
 
 with col_botao:
     gerar = st.button(
