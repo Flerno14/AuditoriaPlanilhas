@@ -10,7 +10,6 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app_corrigido as core
 
-
 def json_value(value):
     if pd.isna(value):
         return None
@@ -34,7 +33,10 @@ def restore_value(value):
 
 
 def dataframe_rows(frame):
-    return [{str(key): json_value(value) for key, value in row.items()} for row in frame.to_dict(orient="records")]
+    return [
+        {str(key): json_value(value) for key, value in row.items()}
+        for row in frame.to_dict(orient="records")
+    ]
 
 
 def execute(action, data):
@@ -75,6 +77,10 @@ def execute(action, data):
         return {"content": base64.b64encode(content).decode("ascii"), "changes": changes, "rows": rows}
 
     raise ValueError(f"Operação desconhecida: {action}")
+
+
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 
 
 for line in sys.stdin:
