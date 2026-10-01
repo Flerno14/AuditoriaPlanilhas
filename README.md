@@ -1,82 +1,32 @@
-# Configurar projeto
+# Auditoria de Planilhas
 
-O projeto necessita que o python esteja instalado na máquina portanto, é necessário que baixar o mesmo pelo google ou rodando o código abaixo
+Aplicativo desktop para comparar duas planilhas Excel, revisar diferenças e salvar uma cópia corrigida. A interface usa CustomTkinter, com controles arredondados e cartões visuais, e abre como uma janela local, sem Streamlit, navegador ou servidor localhost.
 
-    winget install Python.Python.3.14
+## Executar durante o desenvolvimento
 
----
-Em seguida, após clonar o projeto, rode no terminal o seguinte código que instala as dependencias necessárias para que o código funcione devidamente: 
+Instale o Python para Windows e, na pasta do projeto, rode:
 
-    pip install pyinstaller
+```powershell
+& "C:\Program Files\Python314\python.exe" -m pip install -r requirements.txt
+& "C:\Program Files\Python314\python.exe" launcher.py
+```
 
+Selecione o arquivo original e o modificado, escolha uma aba comum e clique em **Comparar planilhas**. Clique em uma célula da coluna **Decisão** para abrir as opções. O botão **Aplicar** define a mesma escolha para todas as diferenças.
 
-    pip install -r requirements.txt
+O aplicativo permite exportar o relatório de diferenças, as escolhas aplicadas, uma cópia do Arquivo 1 com as alterações escolhidas e o arquivo corrigido com as linhas novas do Arquivo 2.
 
-Após a instalação, a estrutura da pasta deve estar dessa forma:
+## Gerar a pasta distribuível
 
-    AuditoriaPlanilhas\
-    │
-    ├── app_corrigido.py               (Código responsável pela lógica do sistema)
-    ├── launcher.py                    (Código responsável pela interface)
-    ├── README.md
-    ├── requirements.txt               (Arquivo que contem as dependencias)
-    ├── pasta-arquivos-excel           (Arquivos de exemplo)
-    │
-    └── _internal\                     (Pasta onde são armazenamdas as dependências)
-        ├── ...
-        ├── streamlit
-        ├── pandas
-        ├── numpy
-        ├── openpyxl
-        └── ...
+Em Windows, gere uma pasta autocontida com:
 
-Caso o conteúdo esteja diferente, execute os códigos abaixo no powershell:
+```powershell
+& "C:\Program Files\Python314\python.exe" -m PyInstaller --clean --noconfirm --onedir --windowed --name AuditoriaPlanilhas --collect-all customtkinter --collect-all darkdetect launcher.py
+```
 
-    pip install streamlit==1.64.0 pandas numpy openpyxl
+O executável fica em `dist\AuditoriaPlanilhas\AuditoriaPlanilhas.exe`. Para distribuição pelo Inno Setup, use **todo o conteúdo** de `dist\AuditoriaPlanilhas`, incluindo a subpasta `_internal`; o executável depende dos arquivos dessa pasta. Configure o Inno Setup para copiar a pasta inteira para `{app}` e crie um atalho para `AuditoriaPlanilhas.exe`.
 
-## Criar um executavel 
+O Tkinter é incluído na instalação oficial do Python para Windows. Caso o PyInstaller indique ausência do Tcl/Tk, repare a instalação do Python e habilite o componente Tcl/Tk antes de compilar novamente. A compilação deve ser feita no Windows para gerar um executável Windows.
 
-Rode o código abaixo para iniciar a compilação para um ".exe":
+## Atualizar a versão distribuível
 
-    python -m PyInstaller --clean --onedir --windowed --name AuditoriaPlanilhas --collect-all streamlit --add-data "app_corrigido.py;." launcher.py
-
-
-Em seguida, rode o seguinte código no terminal para que o código seja executado na porta 3000 do seu localhost
-
-    .\dist\AuditoriaPlanilhas\AuditoriaPlanilhas.exe
-
----
-
-Após o processo finalizar, a estrutura do projeto deverá estar nesse formato:
-
-    AuditoriaPlanilhas\
-    │
-    ├── app_corrigido.py               (Lógica principal do sistema)
-    ├── launcher.py                    (Inicialização/configuração do Streamlit)
-    ├── README.md                      (Documentação)
-    ├── requirements.txt               (Dependências Python)
-    ├── AuditoriaPlanilhas.spec        (Configuração da compilação do PyInstaller)
-    ├── pasta-arquivos-excel           (Arquivos de exemplo/teste)
-    │
-    ├── build\                         (Arquivos temporários da compilação)
-    └── dist\                          (Resultado da compilação)
-        ├── AuditoriaPlanilhas.exe     (Executável do sistema)            
-        └──_internal\                  (Python e dependências empacotadas pelo PyInstaller)           
-            ├── ...
-            ├── streamlit
-            ├── pandas
-            ├── numpy
-            ├── openpyxl
-            └── ...
-
----
-## Alteração após compilação
-No caso de ser necessária a manutenção do código, execute os seguintes comandos:
-
-    Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
-
-    Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
-
-    Remove-Item AuditoriaPlanilhas.spec -ErrorAction SilentlyContinue   
-
-Após as alterações no cógido principal, faça a compilação novamente:
+Depois de alterar o código, rode novamente o comando do PyInstaller. O instalador do Inno Setup deve apontar para os arquivos atualizados dentro de `dist\AuditoriaPlanilhas`.
