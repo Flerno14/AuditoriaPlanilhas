@@ -27,6 +27,16 @@ function rejectPending(error) {
   pending.clear();
 }
 
+function summarizePythonFailure(stderr) {
+  const cpuFailure = stderr.match(/NumPy was built with baseline optimizations:\s*\(([^)]+)\).*?doesn't support:\s*\(([^)]+)\)/s);
+  if (cpuFailure) {
+    return `CPU incompatível: NumPy exige ${cpuFailure[1]}, mas este servidor não oferece ${cpuFailure[2]}. Gere novamente o instalador com a dependência numpy<2.4.`;
+  }
+  const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const summary = [...lines].reverse().find((line) => !/^(Traceback|File |During handling|importlib|_find_and_load|exec_module)/.test(line));
+  return summary ? `Detalhes: ${summary.slice(-500)}` : '';
+}
+
 function startPython() {
   pythonLastError = null;
   pythonStderr = '';
@@ -71,8 +81,8 @@ function startPython() {
     if (python === child) python = null;
   });
   child.on('exit', (code, signal) => {
-    const detail = pythonStderr.trim();
-    pythonLastError = `O processo da lógica de planilhas foi encerrado (código ${code}${signal ? `, sinal ${signal}` : ''}).${detail ? ` Detalhes: ${detail.slice(-1800)}` : ''}`;
+    const detail = summarizePythonFailure(pythonStderr);
+    pythonLastError = `O processo da lógica de planilhas foi encerrado (código ${code}${signal ? `, sinal ${signal}` : ''}).${detail ? ` ${detail}` : ''}`;
     logPython(pythonLastError);
     rejectPending(new Error(pythonLastError));
     if (python === child) python = null;
@@ -87,8 +97,8 @@ function callPython(action, payload = {}) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pending.delete(id);
-      const detail = pythonStderr.trim();
-      reject(new Error(`A lógica de planilhas não respondeu em 60 segundos.${detail ? ` Detalhes: ${detail.slice(-1800)}` : ''}`));
+      const detail = summarizePythonFailure(pythonStderr);
+      reject(new Error(`A lógica de planilhas não respondeu em 60 segundos.${detail ? ` ${detail}` : ''}`));
     }, 60000);
     pending.set(id, {
       resolve: (result) => { clearTimeout(timeout); resolve(result); },

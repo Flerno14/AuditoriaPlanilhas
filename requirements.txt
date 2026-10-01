@@ -1,3 +1,4 @@
 pandas
-numpy
+# NumPy 2.4+ requires the X86_V2 CPU baseline, unavailable on older servers.
+numpy<2.4
 openpyxl
