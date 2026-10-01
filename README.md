@@ -1,32 +1,50 @@
 # Auditoria de Planilhas
 
-Aplicativo desktop para comparar duas planilhas Excel, revisar diferenças e salvar uma cópia corrigida. A interface usa CustomTkinter, com controles arredondados e cartões visuais, e abre como uma janela local, sem Streamlit, navegador ou servidor localhost.
+Aplicativo desktop para comparar duas planilhas Excel, revisar diferenças e salvar uma cópia corrigida. A interface é feita com Electron, HTML e CSS. A leitura, comparação e geração dos arquivos continuam usando a lógica Python existente em `app_corrigido.py`.
+
+## Requisitos
+
+- Node.js e npm
+- Python 3.10 ou superior
 
 ## Executar durante o desenvolvimento
 
-Instale o Python para Windows e, na pasta do projeto, rode:
+Na pasta do projeto, instale as dependências da interface e as bibliotecas Python:
 
 ```powershell
-& "C:\Program Files\Python314\python.exe" -m pip install -r requirements.txt
-& "C:\Program Files\Python314\python.exe" launcher.py
+npm install
+python -m pip install -r requirements.txt
+npm start
 ```
 
-Selecione o arquivo original e o modificado, escolha uma aba comum e clique em **Comparar planilhas**. Clique em uma célula da coluna **Decisão** para abrir as opções. O botão **Aplicar** define a mesma escolha para todas as diferenças.
-
-O aplicativo permite exportar o relatório de diferenças, as escolhas aplicadas, uma cópia do Arquivo 1 com as alterações escolhidas e o arquivo corrigido com as linhas novas do Arquivo 2.
-
-## Gerar a pasta distribuível
-
-Em Windows, gere uma pasta autocontida com:
+Se o comando `python` não apontar para a instalação correta, defina `PYTHON` com o caminho do executável antes de iniciar:
 
 ```powershell
-& "C:\Program Files\Python314\python.exe" -m PyInstaller --clean --noconfirm --onedir --windowed --name AuditoriaPlanilhas --collect-all customtkinter --collect-all darkdetect launcher.py
+$env:PYTHON = "C:\Program Files\Python314\python.exe"
+npm start
 ```
 
-O executável fica em `dist\AuditoriaPlanilhas\AuditoriaPlanilhas.exe`. Para distribuição pelo Inno Setup, use **todo o conteúdo** de `dist\AuditoriaPlanilhas`, incluindo a subpasta `_internal`; o executável depende dos arquivos dessa pasta. Configure o Inno Setup para copiar a pasta inteira para `{app}` e crie um atalho para `AuditoriaPlanilhas.exe`.
+Selecione o arquivo original e o modificado, escolha uma aba comum e clique em **Comparar planilhas**. Clique em uma célula da coluna **Decisão** para escolher entre manter o Arquivo 1, usar o Arquivo 2 ou deixar pendente. **Aplicar** define a mesma escolha para todas as diferenças.
 
-O Tkinter é incluído na instalação oficial do Python para Windows. Caso o PyInstaller indique ausência do Tcl/Tk, repare a instalação do Python e habilite o componente Tcl/Tk antes de compilar novamente. A compilação deve ser feita no Windows para gerar um executável Windows.
+O aplicativo exporta o relatório de diferenças, as escolhas aplicadas, uma cópia do Arquivo 1 com as alterações escolhidas e o arquivo corrigido com as linhas novas do Arquivo 2. Arquivos `.xlsm` mantêm as macros ao gerar a cópia corrigida.
 
-## Atualizar a versão distribuível
+## Estrutura
 
-Depois de alterar o código, rode novamente o comando do PyInstaller. O instalador do Inno Setup deve apontar para os arquivos atualizados dentro de `dist\AuditoriaPlanilhas`.
+- `electron/`: janela, diálogos nativos do sistema e comunicação segura com a interface.
+- `renderer/`: interface visual do aplicativo.
+- `python/bridge.py`: protocolo JSON Lines entre Electron e Python.
+- `app_corrigido.py`: lógica de leitura, comparação e geração de planilhas.
+
+Os arquivos são processados localmente. O Electron chama o Python como um processo filho e transfere somente os dados necessários para as operações.
+
+## Distribuição
+
+O instalador Windows inclui o aplicativo Electron e a ponte Python empacotada; a máquina de quem instala não precisa ter Python, Node.js ou bibliotecas Python. Para compilar, use Windows com Python 3.10+, Node.js/npm e Inno Setup 6 instalado (com `ISCC.exe` no `PATH`). Na pasta do projeto, execute:
+
+```powershell
+npm run build:windows
+```
+
+O script instala as dependências, gera `dist/python/bridge.exe` com PyInstaller, empacota o Electron em `release/win-unpacked` e cria `release/installer/AuditoriaDePlanilhas-Setup-1.0.0.exe` com Inno Setup. O build também pode ser executado em etapas com `npm run build:python`, `npm run build:electron` e `ISCC.exe installer/AuditoriaPlanilhas.iss`.
+
+No modo de desenvolvimento, `electron/main.js` inicia `python/bridge.py` usando `PYTHON` ou o comando Python do sistema. No aplicativo instalado, inicia `resources/python/bridge.exe` sem depender de Python no computador.

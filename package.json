@@ -1,0 +1,38 @@
+{
+  "name": "auditoria-planilhas",
+  "version": "1.0.0",
+  "description": "Aplicativo desktop para comparar e corrigir planilhas Excel",
+  "author": "Auditoria de Planilhas",
+  "productName": "Auditoria de Planilhas",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:python": "pyinstaller --clean --noconfirm --onefile --name bridge --distpath dist/python --workpath build/pyinstaller --paths . python/bridge.py",
+    "build:electron": "electron-builder --win --dir",
+    "build:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1"
+  },
+  "devDependencies": {
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "br.com.auditoriadeplanilhas.app",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/python/bridge.exe",
+        "to": "python/bridge.exe"
+      }
+    ],
+    "win": {
+      "target": ["dir"]
+    }
+  }
+}
