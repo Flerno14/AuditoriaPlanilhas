@@ -48,3 +48,12 @@ npm run build:windows
 O script instala as dependências, gera `dist/python/bridge.exe` com PyInstaller, empacota o Electron em `release/win-unpacked` e cria `release/installer/AuditoriaDePlanilhas-Setup-1.0.0.exe` com Inno Setup. O build também pode ser executado em etapas com `npm run build:python`, `npm run build:electron` e `ISCC.exe installer/AuditoriaPlanilhas.iss`.
 
 No modo de desenvolvimento, `electron/main.js` inicia `python/bridge.py` usando `PYTHON` ou o comando Python do sistema. No aplicativo instalado, inicia `resources/python/bridge.exe` sem depender de Python no computador.
+
+    Get-ExecutionPolicy
+
+---
+
+    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+
+
