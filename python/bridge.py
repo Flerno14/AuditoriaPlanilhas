@@ -16,7 +16,9 @@ def json_value(value):
     if hasattr(value, "isoformat"):
         return {"__excel_datetime__": value.isoformat(), "date_only": isinstance(value, date) and not isinstance(value, datetime)}
     if hasattr(value, "item"):
-        return value.item()
+        return json_value(value.item())
+    if isinstance(value, str):
+        return core.sanitizar_texto_excel(value)
     return value
 
 
@@ -29,6 +31,8 @@ def restore_value(value):
         return {key: restore_value(item) for key, item in value.items()}
     if isinstance(value, list):
         return [restore_value(item) for item in value]
+    if isinstance(value, str):
+        return core.sanitizar_texto_excel(value)
     return value
 
 
@@ -91,5 +95,7 @@ for line in sys.stdin:
         response = {"id": request["id"], "ok": True, "result": result}
     except Exception as error:
         response = {"id": request.get("id"), "ok": False, "error": str(error)}
-    sys.stdout.write(json.dumps(response, ensure_ascii=False, default=json_value) + "\n")
+    # ASCII escaping keeps isolated surrogates in source cells from breaking
+    # the UTF-8 JSON Lines transport; exports sanitize these values for XLSX.
+    sys.stdout.write(json.dumps(response, ensure_ascii=True, default=json_value) + "\n")
     sys.stdout.flush()

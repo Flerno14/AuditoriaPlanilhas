@@ -1,3 +1,5 @@
+param([switch]$PortableOnly)
+
 $ErrorActionPreference = 'Stop'
 
 $pythonCandidates = @()
@@ -64,6 +66,20 @@ for ($attempt = 1; $attempt -le 3; $attempt++) {
 }
 if (-not $electronBuilt) {
   throw 'Falha ao empacotar o aplicativo Electron. Feche o Explorador de Arquivos em release e qualquer aplicativo Auditoria de Planilhas antes de tentar novamente.'
+}
+
+# The win-unpacked folder is self-contained; the ZIP distributes a portable copy.
+$portableZip = Join-Path $projectRoot 'release\AuditoriaDePlanilhas-Portable-1.0.0.zip'
+if (Test-Path -LiteralPath $portableZip) {
+  Remove-Item -LiteralPath $portableZip -Force
+}
+Compress-Archive -Path (Join-Path $electronOutput '*') -DestinationPath $portableZip -CompressionLevel Optimal
+if (-not (Test-Path -LiteralPath $portableZip -PathType Leaf)) {
+  throw 'Failed to create the portable package.'
+}
+if ($PortableOnly) {
+  Write-Host "Portable package created: $portableZip"
+  return
 }
 
 $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue

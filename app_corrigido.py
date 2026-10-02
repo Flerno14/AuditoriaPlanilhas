@@ -9,6 +9,23 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 
 
+def sanitizar_texto_excel(texto: str) -> str:
+    """Substitui apenas caracteres proibidos em XML/Excel.
+
+    Barras, acentos e demais caracteres especiais válidos são preservados.
+    """
+    def permitido_xml(caractere: str) -> bool:
+        codigo = ord(caractere)
+        return (
+            codigo in (0x09, 0x0A, 0x0D)
+            or 0x20 <= codigo <= 0xD7FF
+            or 0xE000 <= codigo <= 0xFFFD
+            or 0x10000 <= codigo <= 0x10FFFF
+        ) and codigo not in (0xFFFE, 0xFFFF)
+
+    return "".join(c if permitido_xml(c) else "\uFFFD" for c in texto)
+
+
 # ============================================================
 # FUNÇÕES DE LEITURA
 # ============================================================
@@ -241,7 +258,10 @@ def normalizar_valor_excel(valor):
         return valor.to_pydatetime()
 
     if isinstance(valor, np.generic):
-        return valor.item()
+        valor = valor.item()
+
+    if isinstance(valor, str):
+        return sanitizar_texto_excel(valor)
 
     return valor
 

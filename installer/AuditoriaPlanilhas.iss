@@ -9,15 +9,15 @@ AppId={{CB9B3296-047A-4E28-A24C-8E495AAC1DC8}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\Auditoria de Planilhas
+DefaultDirName={localappdata}\Programs\Auditoria de Planilhas
 DefaultGroupName={#AppName}
-OutputDir="C:\Users\Administrador\Downloads"
+OutputDir="..\release\installer"
 OutputBaseFilename=AuditoriaDePlanilhas-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\{#AppExeName}
 
 [Languages]

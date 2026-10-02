@@ -9,7 +9,8 @@
     "start": "electron .",
     "build:python": "pyinstaller --clean --noconfirm --onefile --name bridge --distpath dist/python --workpath build/pyinstaller --paths . python/bridge.py",
     "build:electron": "electron-builder --win --dir",
-    "build:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1"
+    "build:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
+    "build:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -PortableOnly"
   },
   "devDependencies": {
     "electron": "^38.2.0",
