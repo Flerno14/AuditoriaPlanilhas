@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -138,6 +138,11 @@ ipcMain.handle('files:save', async (_event, { name, content }) => {
 });
 ipcMain.handle('python:call', (_event, action, payload) => callPython(action, payload));
 
-app.whenReady().then(() => { startPython(); createWindow(); app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); }); });
+app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
+  startPython();
+  createWindow();
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+});
 app.on('before-quit', () => { if (python) python.kill(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
