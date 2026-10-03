@@ -13,8 +13,11 @@
     "build:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -PortableOnly"
   },
   "devDependencies": {
-    "electron": "^38.2.0",
-    "electron-builder": "^26.0.12"
+    "electron": "^44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "overrides": {
+    "@electron/get": "5.1.0"
   },
   "build": {
     "appId": "br.com.auditoriadeplanilhas.app",
