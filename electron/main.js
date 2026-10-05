@@ -119,6 +119,7 @@ function createWindow() {
     width: 1380, height: 900, minWidth: 1000, minHeight: 680,
     backgroundColor: '#f5f7f6',
     title: 'Auditoria de Planilhas',
+    icon: path.join(__dirname, '..', 'app.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));

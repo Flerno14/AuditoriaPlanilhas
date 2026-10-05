@@ -27,6 +27,7 @@
     "files": [
       "electron/**/*",
       "renderer/**/*",
+      "app.ico",
       "package.json"
     ],
     "extraResources": [
@@ -36,6 +37,7 @@
       }
     ],
     "win": {
+      "icon": "app.ico",
       "target": ["dir"]
     }
   }
