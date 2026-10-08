@@ -8,6 +8,15 @@ function notify(message) {
 }
 function showError(error) { notify(error?.message || String(error)); }
 function display(value) { return value == null ? '' : String(value); }
+function normalizeSearch(value) {
+  return display(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+}
+function filteredReportIndices() {
+  const query = normalizeSearch($('search').value.trim());
+  return state.report.flatMap((record, index) =>
+    !query || columns.some((key) => normalizeSearch(record[key]).includes(query)) ? [index] : []
+  );
+}
 
 async function selectFile(slot) {
   try {
@@ -40,10 +49,16 @@ async function compare() {
 
 function renderRows() {
   const body = $('rows'); body.replaceChildren();
+  const indices = filteredReportIndices();
+  $('filter-count').textContent = `${indices.length} de ${state.report.length} diferenças`;
   if (!state.report.length) {
     const row = body.insertRow(); row.className = 'empty'; const cell = row.insertCell(); cell.colSpan = 5; cell.textContent = 'Nenhuma diferença encontrada nesta aba.'; return;
   }
-  state.report.forEach((record, index) => {
+  if (!indices.length) {
+    const row = body.insertRow(); row.className = 'empty'; const cell = row.insertCell(); cell.colSpan = 5; cell.textContent = 'Nenhuma diferença corresponde à pesquisa.'; return;
+  }
+  indices.forEach((index) => {
+    const record = state.report[index];
     const row = body.insertRow();
     columns.slice(0, 4).forEach((key) => { const cell = row.insertCell(); cell.textContent = display(record[key]); cell.title = display(record[key]); });
     const choice = row.insertCell(); const button = document.createElement('button');
@@ -74,7 +89,14 @@ function updateSummary(message) {
   $('summary').textContent = `Diferenças: ${state.report.length}   |   Pendentes: ${pending}   |   Usar Arquivo 2: ${use2}   |   Manter Arquivo 1: ${keep1}   |   Novas linhas adicionadas automaticamente: ${state.newRows}`;
 }
 
-function applyAll() { state.report.forEach((row) => { row['Decisão'] = $('bulk-choice').value; }); renderRows(); updateSummary(); }
+function applyAll() {
+  const indices = $('bulk-scope').value === 'filtered'
+    ? filteredReportIndices()
+    : state.report.map((_row, index) => index);
+  indices.forEach((index) => { state.report[index]['Decisão'] = $('bulk-choice').value; });
+  renderRows(); updateSummary();
+  notify(`${indices.length} diferença(s) atualizada(s).`);
+}
 
 async function saveContent(name, content, message) {
   const saved = await window.auditoria.saveFile(name, content);
@@ -105,6 +127,7 @@ async function generate(includeNewRows, orange) {
 
 $('choose1').addEventListener('click', () => selectFile(1)); $('choose2').addEventListener('click', () => selectFile(2));
 $('compare').addEventListener('click', compare); $('sheet').addEventListener('change', compare); $('apply').addEventListener('click', applyAll);
+$('search').addEventListener('input', renderRows);
 $('export-differences').addEventListener('click', () => exportReport('export-differences', 'diferencas_entre_arquivos.xlsx', 'Não há diferenças para exportar.'));
 $('export-choices').addEventListener('click', () => exportReport('export-choices', 'mudancas_aplicadas.xlsx', 'Não há escolhas para exportar.'));
 $('save-changes').addEventListener('click', () => generate(false, true)); $('generate').addEventListener('click', () => generate(true, false));

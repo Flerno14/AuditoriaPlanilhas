@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Auditoria de Planilhas</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="filter.css">
 </head>
 <body>
   <header class="topbar"><span class="brand-mark">▦</span><strong>Planilha</strong><span class="topbar-subtitle">Central de auditoria</span></header>
@@ -21,7 +22,8 @@
     <section class="card sheet-card"><label for="sheet">Aba da planilha</label><select id="sheet" disabled></select><button class="primary" id="compare">Comparar planilhas</button><span class="hint">Clique em uma decisão para escolher o valor.</span></section>
 
     <section class="card differences-card">
-      <div class="table-toolbar"><strong>Diferenças encontradas</strong><div class="bulk"><label for="bulk-choice">Aplicar a todas:</label><select id="bulk-choice"><option>Manter Arquivo 1</option><option>Usar Arquivo 2</option></select><button class="outline compact" id="apply">Aplicar</button></div></div>
+      <div class="table-toolbar"><strong>Diferenças encontradas</strong><div class="bulk"><label for="bulk-choice">Definir decisão:</label><select id="bulk-choice"><option>Manter Arquivo 1</option><option>Usar Arquivo 2</option></select><button class="outline compact" id="apply">Aplicar</button></div></div>
+      <div class="filter-toolbar"><label class="search-box" for="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Pesquisar diferenças" autocomplete="off"></label><span class="filter-count" id="filter-count" aria-live="polite">0 de 0</span><label for="bulk-scope">Aplicar em:</label><select id="bulk-scope"><option value="all">Todas as diferenças</option><option value="filtered">Itens filtrados</option></select></div>
       <div class="table-wrap"><table><thead><tr><th>Linha</th><th>Coluna</th><th>Arquivo 1 — Original</th><th>Arquivo 2 — Modificado</th><th>Decisão</th></tr></thead><tbody id="rows"><tr class="empty"><td colspan="5">Selecione dois arquivos Excel para começar.</td></tr></tbody></table></div>
     </section>
 

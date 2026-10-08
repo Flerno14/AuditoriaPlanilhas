@@ -51,7 +51,12 @@ def report_frame(records):
     return frame
 
 def json_value(value):
-    if pd.isna(value):
+    if value is None or value is pd.NA:
+        return None
+    ausente = pd.isna(value)
+    # pd.NA has no truth value. Values emitted by a DataFrame are scalar, but
+    # retaining this guard also avoids treating a collection as a boolean.
+    if not hasattr(ausente, "__len__") and bool(ausente):
         return None
     if hasattr(value, "isoformat"):
         return {"__excel_datetime__": value.isoformat(), "date_only": isinstance(value, date) and not isinstance(value, datetime)}

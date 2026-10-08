@@ -55,6 +55,10 @@ def carregar_excel(
         BytesIO(arquivo_bytes),
         sheet_name=sheet_name,
         engine="openpyxl",
+        # A planilha corrigida pode conter texto e números na mesma coluna.
+        # Preservar object evita a conversão de uma coluna mista para string
+        # via PyArrow ("Expected bytes, got a 'int' object").
+        dtype=object,
     )
 
 
@@ -83,7 +87,7 @@ def normalizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     resultado.replace(
         r"^\s*$",
-        pd.NA,
+        np.nan,
         regex=True,
         inplace=True,
     )
@@ -130,7 +134,11 @@ def comparar_dataframes(
     Compara os dois arquivos de forma vetorizada.
 
     Regras:
-    - Diferenças entre linhas que existem no Arquivo 1 aparecem na interface.
+    - Diferenças em linhas presentes nos dois arquivos aparecem na interface,
+      exceto quando o valor do Arquivo 2 está vazio: nesse caso, mantemos o
+      valor do Arquivo 1 automaticamente.
+    - Linhas que existem somente no Arquivo 1 são mantidas automaticamente
+      e não aparecem na interface.
     - Linhas que existem somente no Arquivo 2 NÃO aparecem na interface.
     - As linhas exclusivas do Arquivo 2 são tratadas automaticamente como
       "Usar Arquivo 2" e serão adicionadas ao arquivo corrigido.
@@ -185,27 +193,36 @@ def comparar_dataframes(
         columns=todas_colunas,
     )
 
-    iguais = alinhado_1.eq(alinhado_2)
+    # Materialize comparison results as ordinary booleans before combining
+    # masks; nullable pandas booleans can carry pd.NA into boolean operators.
+    iguais = alinhado_1.eq(alinhado_2).fillna(False)
 
     ambos_vazios = (
         alinhado_1.isna()
         & alinhado_2.isna()
     )
 
-    diferenca = ~(iguais | ambos_vazios)
-    diferenca = diferenca.fillna(True)
+    # Um valor vazio no Arquivo 2 significa manter o valor original. Isso
+    # também cobre linhas inteiras que existem apenas no Arquivo 1.
+    manter_arquivo_1 = alinhado_1.notna() & alinhado_2.isna()
+    diferenca = ~(iguais | ambos_vazios | manter_arquivo_1)
+    # Comparações de colunas ``object`` podem produzir pd.NA. NumPy não
+    # consegue decidir o valor booleano de pd.NA, portanto a máscara precisa
+    # ser materializada explicitamente como bool antes de usar np.where.
+    mascara_diferencas = diferenca.to_numpy(dtype=bool, na_value=True)
 
-    linhas, colunas = np.where(diferenca.to_numpy())
+    linhas, colunas = np.where(mascara_diferencas)
 
-    # IMPORTANTÍSSIMO:
-    # uma linha que existe somente no Arquivo 2 é uma inclusão automática,
-    # portanto não deve aparecer como diferença célula a célula na interface.
-    # Já uma linha que existe somente no Arquivo 1 continua sendo exibida,
-    # pois representa uma possível remoção.
-    somente_linhas_do_arquivo_1 = linhas < quantidade_linhas_arquivo_1
+    # Linhas exclusivas de qualquer arquivo não são listadas: as do Arquivo 2
+    # são adicionadas automaticamente, e as do Arquivo 1 ficam preservadas.
+    quantidade_linhas_compartilhadas = min(
+        quantidade_linhas_arquivo_1,
+        quantidade_linhas_arquivo_2,
+    )
+    somente_linhas_compartilhadas = linhas < quantidade_linhas_compartilhadas
 
-    linhas = linhas[somente_linhas_do_arquivo_1]
-    colunas = colunas[somente_linhas_do_arquivo_1]
+    linhas = linhas[somente_linhas_compartilhadas]
+    colunas = colunas[somente_linhas_compartilhadas]
 
     if len(linhas) == 0:
         return (
@@ -245,11 +262,14 @@ def comparar_dataframes(
 def normalizar_valor_excel(valor):
     """Converte valores pandas para valores aceitos pelo openpyxl."""
 
-    if valor is None:
+    if valor is None or valor is pd.NA:
         return None
 
     try:
-        if pd.isna(valor):
+        # pd.isna(pd.NA) returns pd.NA, whose boolean value is ambiguous.
+        # Only scalar boolean results identify an empty Excel cell here.
+        ausente = pd.isna(valor)
+        if not hasattr(ausente, "__len__") and bool(ausente):
             return None
     except (TypeError, ValueError):
         pass
