@@ -26,7 +26,7 @@ Não escreva logs ou mensagens de depuração em `stdout` da ponte Python: esse 
 
 ## Regras de negócio atuais
 
-- Os arquivos são comparados na aba escolhida, alinhando registros pela posição da linha após o cabeçalho; não há correspondência por chave ou ordenação inteligente.
+- Os arquivos são comparados na aba escolhida, alinhando registros pela posição da linha após o cabeçalho por padrão. Opcionalmente, a configuração “Alinhar pela primeira coluna” usa os valores preenchidos dessa coluna como chaves. A validação de chaves únicas é opcional; sem ela, valores repetidos são pareados na ordem de ocorrência. Chaves vazias sempre geram erro explícito.
 - Diferenças em linhas existentes nos dois arquivos podem ser decididas como `Pendente`, `Manter Arquivo 1` ou `Usar Arquivo 2`.
 - Se uma célula tem valor no Arquivo 1 e está vazia no Arquivo 2, o valor do Arquivo 1 é mantido automaticamente e a diferença não aparece na tabela.
 - Linhas que existem apenas no Arquivo 1 são preservadas e não aparecem para decisão.
@@ -59,7 +59,7 @@ As dependências Python de execução estão em `requirements.txt`; as dependên
 
 ## Preferências e arquivos locais
 
-- Configurações persistentes ficam em `app.getPath('userData')/settings.json`, não na pasta do projeto. Incluem caminhos de modelos de exportação e a cor de destaque das células.
+- Configurações persistentes ficam em `app.getPath('userData')/settings.json`, não na pasta do projeto. Incluem caminhos de modelos de exportação, a cor de destaque das células, a preferência de alinhamento pela primeira coluna e a validação de chaves únicas.
 - A preferência de cor altera o preenchimento das células no arquivo gerado, não a aparência do botão da interface.
 - Entradas Excel são selecionadas por diálogo do sistema. Caminhos não devem ser presumidos nem codificados no projeto.
 - Não inclua planilhas de usuário, configurações pessoais ou saídas de build no repositório sem solicitação explícita.

@@ -13,7 +13,7 @@ let pythonStderr = '';
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
 function readSettings() {
   try { return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); }
-  catch { return { templates: {}, changeColor: '#FFA500' }; }
+  catch { return { templates: {}, changeColor: '#FFA500', alignByFirstColumn: false, validateUniqueFirstColumn: true }; }
 }
 
 function logPython(message) {
@@ -135,7 +135,7 @@ ipcMain.handle('files:open', async (_event, slot) => {
   const result = await dialog.showOpenDialog({ title: slot === 1 ? 'Selecionar arquivo original' : 'Selecionar arquivo modificado', properties: ['openFile'], filters: [{ name: 'Planilhas Excel', extensions: ['xlsx', 'xlsm'] }] });
   if (result.canceled || !result.filePaths.length) return null;
   const file = result.filePaths[0];
-  return { path: file, name: path.basename(file), sheets: await callPython('sheets', { path: file }) };
+  return { path: file, name: path.basename(file) };
 });
 ipcMain.handle('files:open-template', async () => {
   const result = await dialog.showOpenDialog({ title: 'Selecionar modelo de exportação', properties: ['openFile'], filters: [{ name: 'Planilhas Excel', extensions: ['xlsx'] }] });
@@ -150,7 +150,7 @@ ipcMain.handle('settings:save', (_event, settings) => {
     const candidate = settings?.templates?.[key];
     templates[key] = typeof candidate === 'string' && path.isAbsolute(candidate) ? candidate : null;
   }
-  const next = { ...current, ...settings, templates, changeColor: color };
+  const next = { ...current, ...settings, templates, changeColor: color, alignByFirstColumn: settings?.alignByFirstColumn === true, validateUniqueFirstColumn: settings?.validateUniqueFirstColumn !== false };
   fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2), 'utf8');
   return next;
 });

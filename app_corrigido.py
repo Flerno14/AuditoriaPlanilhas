@@ -55,6 +55,10 @@ def carregar_excel(
         BytesIO(arquivo_bytes),
         sheet_name=sheet_name,
         engine="openpyxl",
+        # Preserve valores textuais como "N/A" e "NA"; o padrão do pandas
+        # os converte em ausentes. Células realmente vazias continuam sendo
+        # normalizadas em normalizar_dataframe.
+        keep_default_na=False,
         # A planilha corrigida pode conter texto e números na mesma coluna.
         # Preservar object evita a conversão de uma coluna mista para string
         # via PyArrow ("Expected bytes, got a 'int' object").
@@ -113,12 +117,43 @@ def validar_colunas(
             "O Arquivo 1 possui colunas duplicadas: "
             + ", ".join(map(str, duplicadas_1))
         )
-
     if duplicadas_2:
         raise ValueError(
             "O Arquivo 2 possui colunas duplicadas: "
             + ", ".join(map(str, duplicadas_2))
         )
+
+
+def _chave_primeira_coluna(valor):
+    """Cria uma chave estável para comparar valores da primeira coluna."""
+    if pd.isna(valor):
+        return None
+    if isinstance(valor, (int, float, np.number)) and not isinstance(valor, bool):
+        try:
+            numero = float(valor)
+            if numero.is_integer():
+                return str(int(numero))
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return str(valor).strip()
+
+
+def _mapear_chaves_primeira_coluna(
+    frame: pd.DataFrame,
+    nome_arquivo: str,
+    validar_unicas: bool = True,
+) -> dict:
+    if len(frame.columns) == 0:
+        raise ValueError(f"O {nome_arquivo} não possui primeira coluna para alinhar.")
+    mapa = {}
+    for indice, valor in enumerate(frame.iloc[:, 0]):
+        chave = _chave_primeira_coluna(valor)
+        if chave is None or chave == "":
+            raise ValueError(f"A primeira coluna do {nome_arquivo} contém chave vazia na linha {indice + 2}.")
+        if chave in mapa and validar_unicas:
+            raise ValueError(f"A primeira coluna do {nome_arquivo} contém chave duplicada: {chave}.")
+        mapa.setdefault(chave, []).append(indice)
+    return mapa
 
 
 # ============================================================
@@ -129,6 +164,8 @@ def comparar_dataframes(
     arquivo_1_bytes: bytes,
     arquivo_2_bytes: bytes,
     sheet_name: str,
+    alinhar_primeira_coluna: bool = False,
+    validar_chaves_unicas: bool = True,
 ) -> tuple[pd.DataFrame, int]:
     """
     Compara os dois arquivos de forma vetorizada.
@@ -158,13 +195,35 @@ def comparar_dataframes(
 
     validar_colunas(df1, df2)
 
+    if alinhar_primeira_coluna:
+        chaves_1 = _mapear_chaves_primeira_coluna(df1, "Arquivo 1", validar_chaves_unicas)
+        chaves_2 = _mapear_chaves_primeira_coluna(df2, "Arquivo 2", validar_chaves_unicas)
+        ocorrencias_1 = {}
+        pares = []
+        for indice_1, valor in enumerate(df1.iloc[:, 0]):
+            chave = _chave_primeira_coluna(valor)
+            ocorrencia = ocorrencias_1.get(chave, 0)
+            ocorrencias_1[chave] = ocorrencia + 1
+            indices_correspondentes = chaves_2.get(chave, [])
+            if ocorrencia < len(indices_correspondentes):
+                pares.append((indice_1, indices_correspondentes[ocorrencia]))
+        ocorrencias_2 = {}
+        indices_2_novos = []
+        for indice_2, valor in enumerate(df2.iloc[:, 0]):
+            chave = _chave_primeira_coluna(valor)
+            ocorrencia = ocorrencias_2.get(chave, 0)
+            ocorrencias_2[chave] = ocorrencia + 1
+            if ocorrencia >= len(chaves_1.get(chave, [])):
+                indices_2_novos.append(indice_2)
+        quantidade_linhas_novas = len(indices_2_novos)
+    else:
+        pares = [(indice, indice) for indice in range(min(len(df1), len(df2)))]
+        indices_2_novos = list(range(len(df1), len(df2)))
+
     quantidade_linhas_arquivo_1 = len(df1)
     quantidade_linhas_arquivo_2 = len(df2)
-
-    quantidade_linhas_novas = max(
-        0,
-        quantidade_linhas_arquivo_2 - quantidade_linhas_arquivo_1,
-    )
+    if not alinhar_primeira_coluna:
+        quantidade_linhas_novas = max(0, quantidade_linhas_arquivo_2 - quantidade_linhas_arquivo_1)
 
     # Mantemos a comparação do tamanho máximo para continuar detectando
     # também linhas que existam somente no Arquivo 1 (possíveis remoções).
@@ -173,25 +232,20 @@ def comparar_dataframes(
         quantidade_linhas_arquivo_2,
     )
 
-    indices = pd.RangeIndex(
-        start=0,
-        stop=quantidade_linhas,
-    )
-
     todas_colunas = df1.columns.union(
         df2.columns,
         sort=False,
     )
 
-    alinhado_1 = df1.reindex(
-        index=indices,
-        columns=todas_colunas,
-    )
-
-    alinhado_2 = df2.reindex(
-        index=indices,
-        columns=todas_colunas,
-    )
+    if alinhar_primeira_coluna:
+        linhas_1 = [par[0] for par in pares]
+        linhas_2 = [par[1] for par in pares]
+        alinhado_1 = df1.iloc[linhas_1].reindex(columns=todas_colunas).reset_index(drop=True)
+        alinhado_2 = df2.iloc[linhas_2].reindex(columns=todas_colunas).reset_index(drop=True)
+    else:
+        indices = pd.RangeIndex(start=0, stop=quantidade_linhas)
+        alinhado_1 = df1.reindex(index=indices, columns=todas_colunas)
+        alinhado_2 = df2.reindex(index=indices, columns=todas_colunas)
 
     # Materialize comparison results as ordinary booleans before combining
     # masks; nullable pandas booleans can carry pd.NA into boolean operators.
@@ -215,14 +269,14 @@ def comparar_dataframes(
 
     # Linhas exclusivas de qualquer arquivo não são listadas: as do Arquivo 2
     # são adicionadas automaticamente, e as do Arquivo 1 ficam preservadas.
-    quantidade_linhas_compartilhadas = min(
-        quantidade_linhas_arquivo_1,
-        quantidade_linhas_arquivo_2,
-    )
-    somente_linhas_compartilhadas = linhas < quantidade_linhas_compartilhadas
-
-    linhas = linhas[somente_linhas_compartilhadas]
-    colunas = colunas[somente_linhas_compartilhadas]
+    if alinhar_primeira_coluna:
+        linhas_planilha = np.array([par[0] for par in pares], dtype=int)
+    else:
+        quantidade_linhas_compartilhadas = min(quantidade_linhas_arquivo_1, quantidade_linhas_arquivo_2)
+        somente_linhas_compartilhadas = linhas < quantidade_linhas_compartilhadas
+        linhas = linhas[somente_linhas_compartilhadas]
+        colunas = colunas[somente_linhas_compartilhadas]
+        linhas_planilha = np.arange(quantidade_linhas_compartilhadas, dtype=int)
 
     if len(linhas) == 0:
         return (
@@ -240,7 +294,7 @@ def comparar_dataframes(
 
     relatorio = pd.DataFrame(
         {
-            "Índice/Linha": linhas + 2,
+            "Índice/Linha": linhas_planilha[linhas] + 2,
             "Nome da Coluna": todas_colunas.to_numpy()[colunas],
             "Valor no Arquivo 1": alinhado_1.to_numpy()[
                 linhas, colunas
@@ -328,6 +382,8 @@ def gerar_arquivo_corrigido(
     incluir_linhas_novas: bool = True,
     marcar_alteracoes_laranja: bool = False,
     cor_alteracoes: str = "#FFA500",
+    alinhar_primeira_coluna: bool = False,
+    validar_chaves_unicas: bool = True,
 ) -> tuple[bytes, int, int]:
     """
     Cria uma cópia do Arquivo 1, aplica as decisões do usuário e
@@ -441,22 +497,33 @@ def gerar_arquivo_corrigido(
         quantidade_linhas_arquivo_1 = len(df_original)
         quantidade_linhas_arquivo_2 = len(df_modificado)
 
-        quantidade_linhas_novas = max(
-            0,
-            quantidade_linhas_arquivo_2 - quantidade_linhas_arquivo_1,
-        )
+        if alinhar_primeira_coluna:
+            chaves_1 = _mapear_chaves_primeira_coluna(df_original, "Arquivo 1", validar_chaves_unicas)
+            _mapear_chaves_primeira_coluna(df_modificado, "Arquivo 2", validar_chaves_unicas)
+            ocorrencias_2 = {}
+            indices_linhas_novas = []
+            for indice, valor in enumerate(df_modificado.iloc[:, 0]):
+                chave = _chave_primeira_coluna(valor)
+                ocorrencia = ocorrencias_2.get(chave, 0)
+                ocorrencias_2[chave] = ocorrencia + 1
+                if ocorrencia >= len(chaves_1.get(chave, [])):
+                    indices_linhas_novas.append(indice)
+            quantidade_linhas_novas = len(indices_linhas_novas)
+        else:
+            quantidade_linhas_novas = max(0, quantidade_linhas_arquivo_2 - quantidade_linhas_arquivo_1)
+            indices_linhas_novas = list(range(quantidade_linhas_arquivo_1, quantidade_linhas_arquivo_2))
 
         if incluir_linhas_novas and quantidade_linhas_novas > 0:
 
             # Os dados começam na linha 2, pois a linha 1 é o cabeçalho.
-            primeira_linha_nova = quantidade_linhas_arquivo_1 + 2
+            primeira_linha_nova = max(quantidade_linhas_arquivo_1 + 2, worksheet.max_row + 1)
 
             # Preserva a formatação da última linha existente sempre que
             # possível.
             ultima_linha_existente = quantidade_linhas_arquivo_1 + 1
 
             for deslocamento, indice_df2 in enumerate(
-                range(quantidade_linhas_arquivo_1, quantidade_linhas_arquivo_2)
+                indices_linhas_novas
             ):
 
                 linha_excel = primeira_linha_nova + deslocamento

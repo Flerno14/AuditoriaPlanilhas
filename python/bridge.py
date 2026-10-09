@@ -115,7 +115,11 @@ def execute(action, data):
     if action == "compare":
         first = Path(data["file1"]).read_bytes()
         second = Path(data["file2"]).read_bytes()
-        report, new_rows = core.comparar_dataframes(first, second, data["sheet"])
+        report, new_rows = core.comparar_dataframes(
+            first, second, data["sheet"],
+            alinhar_primeira_coluna=bool(data.get("alignByFirstColumn", False)),
+            validar_chaves_unicas=bool(data.get("validateUniqueFirstColumn", True)),
+        )
         return {"report": dataframe_rows(report), "newRows": new_rows}
 
     if action == "export-differences":
@@ -141,6 +145,8 @@ def execute(action, data):
             incluir_linhas_novas=data["includeNewRows"],
             marcar_alteracoes_laranja=data["markChanges"],
             cor_alteracoes=data.get("changeColor", "#FFA500"),
+            alinhar_primeira_coluna=bool(data.get("alignByFirstColumn", False)),
+            validar_chaves_unicas=bool(data.get("validateUniqueFirstColumn", True)),
         )
         return {"content": base64.b64encode(content).decode("ascii"), "changes": changes, "rows": rows}
 
