@@ -6,6 +6,7 @@ import json
 import sys
 import unicodedata
 from pathlib import Path
+from openpyxl import load_workbook
 
 import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -88,6 +89,25 @@ def dataframe_rows(frame):
     ]
 
 
+def export_frame(frame, template_path=None):
+    if not template_path:
+        output = BytesIO()
+        frame.to_excel(output, index=False, sheet_name="Relatório")
+        return output.getvalue()
+    template = Path(template_path)
+    if not template.is_file():
+        raise ValueError(f"O modelo de exportação não foi encontrado: {template}")
+    workbook = load_workbook(template)
+    sheet = workbook.active
+    for row_index, values in enumerate([list(frame.columns), *frame.itertuples(index=False, name=None)], start=1):
+        for column_index, value in enumerate(values, start=1):
+            cell = sheet.cell(row=row_index, column=column_index)
+            cell.value = restore_value(json_value(value))
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 def execute(action, data):
     if action == "sheets":
         return core.obter_abas(Path(data["path"]).read_bytes())
@@ -100,18 +120,16 @@ def execute(action, data):
 
     if action == "export-differences":
         frame = report_frame(data["report"])
-        output = BytesIO()
-        frame.to_excel(output, index=False, sheet_name="Diferenças")
-        return {"content": base64.b64encode(output.getvalue()).decode("ascii")}
+        content = export_frame(frame, data.get("templatePath"))
+        return {"content": base64.b64encode(content).decode("ascii")}
 
     if action == "export-choices":
         frame = report_frame(data["report"])
         if frame["Decisão"].eq("Pendente").any():
             raise ValueError("Resolva todas as diferenças antes de exportar as escolhas.")
         selected = frame.apply(lambda row: row["Valor no Arquivo 2"] if row["Decisão"] == "Usar Arquivo 2" else row["Valor no Arquivo 1"], axis=1)
-        output = BytesIO()
-        pd.DataFrame({"Linha": frame["Índice/Linha"], "Coluna": frame["Nome da Coluna"], "Mudanças Aplicadas": selected}).to_excel(output, index=False, sheet_name="Conteúdo escolhido")
-        return {"content": base64.b64encode(output.getvalue()).decode("ascii")}
+        content = export_frame(pd.DataFrame({"Linha": frame["Índice/Linha"], "Coluna": frame["Nome da Coluna"], "Mudanças Aplicadas": selected}), data.get("templatePath"))
+        return {"content": base64.b64encode(content).decode("ascii")}
 
     if action == "generate":
         first = Path(data["file1"]).read_bytes()
@@ -121,7 +139,8 @@ def execute(action, data):
         content, changes, rows = core.gerar_arquivo_corrigido(
             first, second, report, decisions, data["sheet"], data["name"],
             incluir_linhas_novas=data["includeNewRows"],
-            marcar_alteracoes_laranja=data["orange"],
+            marcar_alteracoes_laranja=data["markChanges"],
+            cor_alteracoes=data.get("changeColor", "#FFA500"),
         )
         return {"content": base64.b64encode(content).decode("ascii"), "changes": changes, "rows": rows}
 

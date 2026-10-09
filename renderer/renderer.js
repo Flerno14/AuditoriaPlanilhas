@@ -1,4 +1,7 @@
 const state = { file1: null, file2: null, report: [], newRows: 0, sheet: '' };
+const settings = { templates: { differences: null, choices: null }, changeColor: '#FFA500' };
+let settingsSnapshot = null;
+let settingsSavedOnClose = false;
 const $ = (id) => document.getElementById(id);
 const columns = ['Índice/Linha', 'Nome da Coluna', 'Valor no Arquivo 1', 'Valor no Arquivo 2', 'Decisão'];
 
@@ -8,13 +11,14 @@ function notify(message) {
 }
 function showError(error) { notify(error?.message || String(error)); }
 function display(value) { return value == null ? '' : String(value); }
-function normalizeSearch(value) {
-  return display(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+function searchValue(value) {
+  const text = display(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return $('match-case').getAttribute('aria-pressed') === 'true' ? text : text.toLocaleLowerCase('pt-BR');
 }
 function filteredReportIndices() {
-  const query = normalizeSearch($('search').value.trim());
+  const query = searchValue($('search').value.trim());
   return state.report.flatMap((record, index) =>
-    !query || columns.some((key) => normalizeSearch(record[key]).includes(query)) ? [index] : []
+    !query || columns.some((key) => searchValue(record[key]).includes(query)) ? [index] : []
   );
 }
 
@@ -108,16 +112,17 @@ async function exportReport(action, name, emptyMessage) {
   if (!state.report.length) { notify(emptyMessage); return; }
   if (action === 'export-choices' && state.report.some((row) => row['Decisão'] === 'Pendente')) { notify('Resolva todas as diferenças antes de exportar as escolhas.'); return; }
   try {
-    const result = await window.auditoria.callPython(action, { report: state.report });
+    const templateKey = action === 'export-differences' ? 'differences' : 'choices';
+    const result = await window.auditoria.callPython(action, { report: state.report, templatePath: settings.templates[templateKey] });
     await saveContent(name, result.content, 'Arquivo salvo');
   } catch (error) { showError(error); }
 }
 
-async function generate(includeNewRows, orange) {
+async function generate(includeNewRows, markChanges) {
   if (!state.file1 || !state.file2) { notify('Selecione os dois arquivos Excel para continuar.'); return; }
   if (state.report.some((row) => row['Decisão'] === 'Pendente')) { notify('Resolva todas as diferenças antes de gerar o arquivo.'); return; }
   try {
-    const result = await window.auditoria.callPython('generate', { file1: state.file1.path, file2: state.file2.path, sheet: state.sheet, name: state.file1.name, report: state.report, includeNewRows, orange });
+    const result = await window.auditoria.callPython('generate', { file1: state.file1.path, file2: state.file2.path, sheet: state.sheet, name: state.file1.name, report: state.report, includeNewRows, markChanges, changeColor: settings.changeColor });
     const suffix = includeNewRows ? '_corrigido' : '_somente_alteracoes';
     const base = state.file1.name.replace(/\.[^.]+$/, ''); const ext = state.file1.name.match(/\.[^.]+$/)?.[0] || '.xlsx';
     const saved = await saveContent(`${base}${suffix}${ext}`, result.content, 'Arquivo salvo');
@@ -128,6 +133,43 @@ async function generate(includeNewRows, orange) {
 $('choose1').addEventListener('click', () => selectFile(1)); $('choose2').addEventListener('click', () => selectFile(2));
 $('compare').addEventListener('click', compare); $('sheet').addEventListener('change', compare); $('apply').addEventListener('click', applyAll);
 $('search').addEventListener('input', renderRows);
+$('match-case').addEventListener('click', (event) => {
+  const enabled = event.currentTarget.getAttribute('aria-pressed') !== 'true';
+  event.currentTarget.setAttribute('aria-pressed', String(enabled));
+  renderRows();
+});
 $('export-differences').addEventListener('click', () => exportReport('export-differences', 'diferencas_entre_arquivos.xlsx', 'Não há diferenças para exportar.'));
 $('export-choices').addEventListener('click', () => exportReport('export-choices', 'mudancas_aplicadas.xlsx', 'Não há escolhas para exportar.'));
 $('save-changes').addEventListener('click', () => generate(false, true)); $('generate').addEventListener('click', () => generate(true, false));
+
+function renderSettings() {
+  for (const key of ['differences', 'choices']) $(`template-${key}-name`).textContent = settings.templates[key] ? settings.templates[key].split(/[\\/]/).pop() : 'Nenhum modelo selecionado';
+  $('change-color').value = settings.changeColor;
+  $('change-color-value').textContent = settings.changeColor;
+  document.documentElement.style.setProperty('--change-color', settings.changeColor);
+}
+$('open-settings').addEventListener('click', () => {
+  settingsSnapshot = structuredClone(settings);
+  settingsSavedOnClose = false;
+  $('change-color').value = settings.changeColor;
+  $('settings-dialog').showModal();
+});
+$('cancel-settings').addEventListener('click', () => $('settings-dialog').close());
+$('settings-dialog').addEventListener('close', () => {
+  if (!settingsSavedOnClose && settingsSnapshot) {
+    Object.assign(settings, settingsSnapshot);
+    renderSettings();
+  }
+  settingsSnapshot = null;
+});
+$('change-color').addEventListener('input', (event) => { $('change-color-value').textContent = event.target.value.toUpperCase(); });
+document.querySelectorAll('[data-template]').forEach((button) => button.addEventListener('click', async () => {
+  try { const file = await window.auditoria.openTemplate(); if (file) { settings.templates[button.dataset.template] = file.path; renderSettings(); } }
+  catch (error) { showError(error); }
+}));
+document.querySelectorAll('[data-clear-template]').forEach((button) => button.addEventListener('click', () => { settings.templates[button.dataset.clearTemplate] = null; renderSettings(); }));
+$('save-settings').addEventListener('click', async () => {
+  try { Object.assign(settings, await window.auditoria.saveSettings({ templates: settings.templates, changeColor: $('change-color').value })); settingsSavedOnClose = true; renderSettings(); $('settings-dialog').close(); notify('Configurações salvas.'); }
+  catch (error) { showError(error); }
+});
+window.auditoria.getSettings().then((saved) => { Object.assign(settings, saved); renderSettings(); }).catch(showError);

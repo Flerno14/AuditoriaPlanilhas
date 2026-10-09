@@ -327,6 +327,7 @@ def gerar_arquivo_corrigido(
     nome_arquivo_original: str,
     incluir_linhas_novas: bool = True,
     marcar_alteracoes_laranja: bool = False,
+    cor_alteracoes: str = "#FFA500",
 ) -> tuple[bytes, int, int]:
     """
     Cria uma cópia do Arquivo 1, aplica as decisões do usuário e
@@ -428,7 +429,7 @@ def gerar_arquivo_corrigido(
             if marcar_alteracoes_laranja and valor_anterior != novo_valor:
                 celula.fill = PatternFill(
                     fill_type="solid",
-                    fgColor="FFFFA500",
+                    fgColor="FF" + cor_alteracoes.lstrip("#").upper(),
                 )
 
             quantidade_alteracoes += 1

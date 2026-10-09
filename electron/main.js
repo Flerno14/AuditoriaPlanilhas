@@ -10,6 +10,12 @@ const pending = new Map();
 let inputBuffer = '';
 let pythonStderr = '';
 
+function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
+function readSettings() {
+  try { return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); }
+  catch { return { templates: {}, changeColor: '#FFA500' }; }
+}
+
 function logPython(message) {
   const line = `[${new Date().toISOString()}] ${message}\n`;
   console.error(line.trimEnd());
@@ -130,6 +136,23 @@ ipcMain.handle('files:open', async (_event, slot) => {
   if (result.canceled || !result.filePaths.length) return null;
   const file = result.filePaths[0];
   return { path: file, name: path.basename(file), sheets: await callPython('sheets', { path: file }) };
+});
+ipcMain.handle('files:open-template', async () => {
+  const result = await dialog.showOpenDialog({ title: 'Selecionar modelo de exportação', properties: ['openFile'], filters: [{ name: 'Planilhas Excel', extensions: ['xlsx'] }] });
+  return result.canceled || !result.filePaths.length ? null : { path: result.filePaths[0], name: path.basename(result.filePaths[0]) };
+});
+ipcMain.handle('settings:get', () => readSettings());
+ipcMain.handle('settings:save', (_event, settings) => {
+  const current = readSettings();
+  const color = /^#[0-9a-f]{6}$/i.test(settings?.changeColor) ? settings.changeColor.toUpperCase() : current.changeColor;
+  const templates = {};
+  for (const key of ['differences', 'choices']) {
+    const candidate = settings?.templates?.[key];
+    templates[key] = typeof candidate === 'string' && path.isAbsolute(candidate) ? candidate : null;
+  }
+  const next = { ...current, ...settings, templates, changeColor: color };
+  fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2), 'utf8');
+  return next;
 });
 ipcMain.handle('files:save', async (_event, { name, content }) => {
   const result = await dialog.showSaveDialog({ title: 'Salvar arquivo gerado', defaultPath: name, filters: [{ name: 'Planilhas Excel', extensions: [path.extname(name).slice(1) || 'xlsx'] }] });

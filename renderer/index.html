@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="filter.css">
 </head>
 <body>
-  <header class="topbar"><span class="brand-mark">▦</span><strong>Planilha</strong><span class="topbar-subtitle">Central de auditoria</span></header>
+  <header class="topbar"><span class="brand-mark">▦</span><strong>Planilha</strong><span class="topbar-subtitle">Central de auditoria</span><button class="outline settings-trigger" id="open-settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙ Configurações</button></header>
   <main class="app-shell">
     <div class="eyebrow">AUDITORIA DE PLANILHAS</div>
     <h1>Compare versões com clareza.</h1>
@@ -23,13 +23,25 @@
 
     <section class="card differences-card">
       <div class="table-toolbar"><strong>Diferenças encontradas</strong><div class="bulk"><label for="bulk-choice">Definir decisão:</label><select id="bulk-choice"><option>Manter Arquivo 1</option><option>Usar Arquivo 2</option></select><button class="outline compact" id="apply">Aplicar</button></div></div>
-      <div class="filter-toolbar"><label class="search-box" for="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Pesquisar diferenças" autocomplete="off"></label><span class="filter-count" id="filter-count" aria-live="polite">0 de 0</span><label for="bulk-scope">Aplicar em:</label><select id="bulk-scope"><option value="all">Todas as diferenças</option><option value="filtered">Itens filtrados</option></select></div>
+      <div class="filter-toolbar"><label class="search-box" for="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Pesquisar diferenças" autocomplete="off"></label><button class="match-case" id="match-case" type="button" aria-pressed="false" aria-label="Diferenciar maiúsculas e minúsculas" title="Diferenciar maiúsculas e minúsculas">Aa</button><span class="filter-count" id="filter-count" aria-live="polite">0 de 0</span><label for="bulk-scope">Aplicar em:</label><select id="bulk-scope"><option value="all">Todas as diferenças</option><option value="filtered">Itens filtrados</option></select></div>
       <div class="table-wrap"><table><thead><tr><th>Linha</th><th>Coluna</th><th>Arquivo 1 — Original</th><th>Arquivo 2 — Modificado</th><th>Decisão</th></tr></thead><tbody id="rows"><tr class="empty"><td colspan="5">Selecione dois arquivos Excel para começar.</td></tr></tbody></table></div>
     </section>
 
     <section class="card summary" id="summary">Selecione os dois arquivos Excel para começar.</section>
-    <footer class="actions"><button class="outline" id="export-differences">Exportar diferenças</button><button class="outline" id="export-choices">Exportar escolhas</button><button class="outline" id="save-changes">Salvar alterações</button><button class="primary" id="generate">Gerar arquivo corrigido</button></footer>
+    <footer class="actions"><button class="outline" id="export-differences">Exportar tabela de diferenças</button><button class="outline" id="export-choices">Exportar tabela de escolhas</button><button class="outline" id="save-changes">Salvar alterações</button><button class="primary" id="generate">Gerar arquivo corrigido</button></footer>
   </main>
+  <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
+    <form method="dialog" class="settings-form">
+      <div class="settings-heading"><div><div class="eyebrow">PREFERÊNCIAS DO PROJETO</div><h2 id="settings-title">Configurações</h2></div><button class="icon-button" aria-label="Fechar configurações">×</button></div>
+      <section class="settings-section"><h3>Modelos de exportação</h3><p>Escolha uma planilha para servir de base a cada relatório. Os dados serão preenchidos no primeiro separador.</p>
+        <div class="setting-field">Modelo de diferenças</div><div class="template-picker"><span id="template-differences-name">Nenhum modelo selecionado</span><button type="button" class="outline compact" data-template="differences">Escolher arquivo</button><button type="button" class="text-button" data-clear-template="differences">Remover</button></div>
+        <div class="setting-field">Modelo de escolhas</div><div class="template-picker"><span id="template-choices-name">Nenhum modelo selecionado</span><button type="button" class="outline compact" data-template="choices">Escolher arquivo</button><button type="button" class="text-button" data-clear-template="choices">Remover</button></div>
+      </section>
+      <section class="settings-section"><h3>Marcação das alterações</h3><p>Cor usada para destacar as células alteradas pelo botão “Salvar alterações”.</p><label class="color-setting" for="change-color"><input id="change-color" type="color" value="#FFA500"><span>Cor de destaque</span><code id="change-color-value">#FFA500</code></label></section>
+      <section class="settings-section future-settings"><h3>Mais opções</h3><p>Este espaço está preparado para novas configurações do projeto.</p><div class="future-slot" aria-hidden="true"><span>+</span> Novas preferências poderão ser adicionadas aqui</div></section>
+      <div class="settings-actions"><button type="button" class="outline" id="cancel-settings">Cancelar</button><button type="button" class="primary" id="save-settings">Salvar configurações</button></div>
+    </form>
+  </dialog>
   <div class="toast" id="toast" role="status"></div>
   <script src="renderer.js"></script>
 </body>
