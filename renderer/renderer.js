@@ -146,7 +146,6 @@ function renderSettings() {
   for (const key of ['differences', 'choices']) $(`template-${key}-name`).textContent = settings.templates[key] ? settings.templates[key].split(/[\\/]/).pop() : 'Nenhum modelo selecionado';
   $('change-color').value = settings.changeColor;
   $('change-color-value').textContent = settings.changeColor;
-  document.documentElement.style.setProperty('--change-color', settings.changeColor);
 }
 $('open-settings').addEventListener('click', () => {
   settingsSnapshot = structuredClone(settings);

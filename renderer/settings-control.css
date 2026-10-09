@@ -1,0 +1,3 @@
+/* The configured accent is for generated workbook cells; keep the action button neutral. */
+.actions #save-changes{border-color:#dce6e0;color:#24463d}
+.actions #save-changes:hover{background:#eff7f2;border-color:#dce6e0}
