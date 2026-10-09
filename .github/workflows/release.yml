@@ -1,5 +1,5 @@
 name: Publicar versão Windows
-
+ 
 on:
   push:
     tags:
