@@ -1,6 +1,12 @@
 param([switch]$PortableOnly)
 
 $ErrorActionPreference = 'Stop'
+$projectRoot = Split-Path -Parent $PSScriptRoot
+Set-Location -LiteralPath $projectRoot
+$appVersion = (Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
+if ($appVersion -notmatch '^\d+\.\d+\.\d+([+-][0-9A-Za-z.-]+)?$') {
+  throw 'Versao invalida em package.json.'
+}
 
 $pythonCandidates = @()
 if ($env:PYTHON -and (Test-Path -LiteralPath $env:PYTHON -PathType Leaf)) {
@@ -42,18 +48,26 @@ if ($LASTEXITCODE -ne 0) { throw 'Falha ao instalar as dependências Node.js.' }
 & $python.Command @($python.Arguments) -m PyInstaller --clean --noconfirm --onefile --name bridge --distpath dist/python --workpath build/pyinstaller --paths . python/bridge.py
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao empacotar a ponte Python.' }
 
-$projectRoot = Split-Path -Parent $PSScriptRoot
 $electronOutput = Join-Path $projectRoot 'release\\win-unpacked'
 $electronTemporaryOutput = Join-Path $projectRoot 'release\\win-unpacked.tmp'
 $electronBuilt = $false
 for ($attempt = 1; $attempt -le 3; $attempt++) {
   foreach ($output in @($electronOutput, $electronTemporaryOutput)) {
     if (Test-Path -LiteralPath $output) {
+      $resolvedOutput = (Resolve-Path -LiteralPath $output).Path
+      $releaseRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'release')) + '\'
+      if (-not $resolvedOutput.StartsWith($releaseRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Diretorio de build fora de release: $resolvedOutput"
+      }
       Remove-Item -LiteralPath $output -Recurse -Force
     }
   }
 
-  npm run build:electron
+  if ($PortableOnly) {
+    npm.cmd run build:electron:dir
+  } else {
+    npm.cmd run build:electron
+  }
   if ($LASTEXITCODE -eq 0) {
     $electronBuilt = $true
     break
@@ -69,7 +83,7 @@ if (-not $electronBuilt) {
 }
 
 # The win-unpacked folder is self-contained; the ZIP distributes a portable copy.
-$portableZip = Join-Path $projectRoot 'release\AuditoriaDePlanilhas-Portable-1.0.0.zip'
+$portableZip = Join-Path $projectRoot "release\AuditoriaDePlanilhas-Portable-$appVersion.zip"
 if (Test-Path -LiteralPath $portableZip) {
   Remove-Item -LiteralPath $portableZip -Force
 }
@@ -82,9 +96,10 @@ if ($PortableOnly) {
   return
 }
 
-$iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
-if (-not $iscc) {
-  throw 'Inno Setup não encontrado. Instale o Inno Setup 6 e adicione ISCC.exe ao PATH.'
+$installer = Join-Path $projectRoot "release\AuditoriaDePlanilhas-Setup-$appVersion.exe"
+foreach ($artifact in @($installer, "$installer.blockmap", (Join-Path $projectRoot 'release\latest.yml'))) {
+  if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+    throw "Artefato de distribuicao ausente: $artifact"
+  }
 }
-& $iscc.Source 'installer/AuditoriaPlanilhas.iss'
-if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar o instalador Inno Setup.' }
+Write-Host "Instalador NSIS e metadados de atualizacao criados em release. Versao: $appVersion"

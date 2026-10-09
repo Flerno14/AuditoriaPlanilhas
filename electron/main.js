@@ -2,6 +2,13 @@ const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { pathToFileURL } = require('node:url');
+const { autoUpdater } = require('electron-updater');
+const { createUpdateController } = require('./updates');
+
+let mainWindow;
+let updateController;
+const rendererPath = path.join(__dirname, '..', 'renderer', 'index.html');
 
 let python;
 let pythonLastError;
@@ -128,7 +135,54 @@ function createWindow() {
     icon: path.join(__dirname, '..', 'app.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
-  window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  mainWindow = window;
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (event) => event.preventDefault());
+  window.on('closed', () => { if (mainWindow === window) mainWindow = null; });
+  window.loadFile(rendererPath);
+}
+
+function initializeUpdates() {
+  const uninstallName = `Uninstall ${app.getName()}.exe`;
+  const installed = app.isPackaged && process.platform === 'win32' && fs.existsSync(path.join(path.dirname(app.getPath('exe')), uninstallName));
+  const disabledReason = !app.isPackaged
+    ? 'Atualizações estão disponíveis no aplicativo instalado. O modo de desenvolvimento não instala atualizações.'
+    : !installed ? 'Para receber atualizações, instale o aplicativo pelo instalador Windows NSIS. A versão portátil é atualizada manualmente.' : '';
+  const logError = (error) => {
+    console.error('Falha no atualizador:', error);
+    try {
+      fs.mkdirSync(app.getPath('userData'), { recursive: true });
+      fs.appendFileSync(path.join(app.getPath('userData'), 'updates.log'), `[${new Date().toISOString()}] ${error?.stack || error}\n`, 'utf8');
+    } catch { /* Logging must not stop the app. */ }
+  };
+  updateController = createUpdateController({
+    updater: autoUpdater, version: app.getVersion(), disabledReason, logError,
+    sendState: (state) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updates:state', state);
+    },
+    confirmInstall: async () => {
+      if (pending.size) {
+        await dialog.showMessageBox(mainWindow, { type: 'info', message: 'Aguarde o processamento das planilhas terminar antes de instalar a atualização.' });
+        return false;
+      }
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: 'question', title: 'Instalar atualização',
+        message: 'Instalar a atualização e reiniciar o aplicativo?',
+        detail: 'Decisões e configurações ainda não salvas serão perdidas. Salve ou exporte seu trabalho antes de continuar.',
+        buttons: ['Cancelar', 'Instalar e reiniciar'], defaultId: 0, cancelId: 0, noLink: true
+      });
+      return result.response === 1;
+    },
+    beforeInstall: () => { if (python) python.kill(); }
+  });
+  for (const [channel, action] of Object.entries({ 'updates:get': 'snapshot', 'updates:check': 'check', 'updates:download': 'download', 'updates:install': 'install' })) {
+    ipcMain.handle(channel, (event) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame || event.senderFrame.url !== pathToFileURL(rendererPath).href) {
+        throw new Error('Origem não autorizada para atualizações.');
+      }
+      return updateController[action]();
+    });
+  }
 }
 
 ipcMain.handle('files:open', async (_event, slot) => {
@@ -164,6 +218,7 @@ ipcMain.handle('python:call', (_event, action, payload) => callPython(action, pa
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  initializeUpdates();
   startPython();
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

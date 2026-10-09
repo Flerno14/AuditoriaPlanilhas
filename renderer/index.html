@@ -40,7 +40,13 @@
       </section>
       <section class="settings-section"><h3>Marcação das alterações</h3><p>Cor usada para destacar as células alteradas pelo botão “Salvar alterações”.</p><label class="color-setting" for="change-color"><input id="change-color" type="color" value="#FFA500"><span>Cor de destaque</span><code id="change-color-value">#FFA500</code></label></section>
       <section class="settings-section"><h3>Alinhamento das linhas</h3><p>Use o valor da primeira coluna para comparar registros mesmo quando estiverem em posições diferentes. Valores vazios nessa coluna continuam inválidos para o alinhamento.</p><label class="alignment-setting" for="align-first-column"><input id="align-first-column" type="checkbox"><span>Alinhar pela primeira coluna</span></label><label class="alignment-setting alignment-subsetting" for="validate-unique-first-column"><input id="validate-unique-first-column" type="checkbox" checked><span>Exigir valores únicos na primeira coluna</span></label><p class="setting-note">Com o alinhamento ativo e esta validação desativada, ocorrências repetidas são associadas na ordem em que aparecem.</p></section>
-      <section class="settings-section future-settings"><h3>Mais opções</h3><p>Este espaço está preparado para novas configurações do projeto.</p><div class="future-slot" aria-hidden="true"><span>+</span> Novas preferências poderão ser adicionadas aqui</div></section>
+      <section class="settings-section" aria-labelledby="updates-title"><h3 id="updates-title">Atualizações</h3>
+        <p>Versão atual: <strong id="current-version">Carregando...</strong></p>
+        <p id="update-status" role="status" aria-live="polite">Carregando informações de atualização...</p>
+        <progress id="update-progress" max="100" value="0" aria-label="Progresso do download da atualização" hidden></progress>
+        <div class="update-actions"><button type="button" class="outline" id="check-updates" disabled>Verificar atualizações</button><button type="button" class="primary" id="download-update" hidden>Baixar atualização</button><button type="button" class="primary" id="install-update" hidden>Instalar e reiniciar</button></div>
+        <p class="update-note">Salve seu trabalho antes de instalar. O aplicativo será fechado e reiniciado.</p>
+      </section>
       <div class="settings-actions"><button type="button" class="outline" id="cancel-settings">Cancelar</button><button type="button" class="primary" id="save-settings">Salvar configurações</button></div>
     </form>
   </dialog>
@@ -49,5 +55,6 @@
   </div>
   <div class="toast" id="toast" role="status"></div>
   <script src="renderer.js"></script>
+  <script src="updates.js"></script>
 </body>
 </html>

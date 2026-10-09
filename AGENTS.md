@@ -4,16 +4,17 @@ Leia este arquivo antes de alterar o projeto. Use-o como referência para confer
 
 ## Objetivo
 
-Aplicativo desktop para Windows que compara duas planilhas Excel, permite revisar e decidir diferenças, exporta relatórios e gera uma cópia corrigida do Arquivo 1. O processamento é local; não há serviço web nem banco de dados remoto.
+Aplicativo desktop para Windows que compara duas planilhas Excel, permite revisar e decidir diferenças, exporta relatórios e gera uma cópia corrigida do Arquivo 1. O processamento de planilhas é local; não há serviço web nem banco de dados remoto. A verificação e o download de atualizações consultam GitHub Releases sem enviar planilhas.
 
 ## Arquitetura e responsabilidades
 
 - `electron/main.js`: processo principal. Cria a janela, abre e salva arquivos, persiste preferências, inicia o processo Python e atende chamadas IPC.
 - `electron/preload.js`: ponte mínima entre a interface e o processo principal. Mantém `contextIsolation: true`, `nodeIntegration: false` e `sandbox: true` na janela.
+- `electron/updates.js`: estado e ações do `electron-updater`, integrado pelo main via IPC com validação do remetente. `renderer/updates.js` mostra a versão, disponibilidade e progresso em Configurações.
 - `renderer/`: interface HTML/CSS/JavaScript, em português do Brasil. Mantém o estado da sessão, renderiza a tabela, filtra e envia decisões para a ponte.
 - `python/bridge.py`: recebe e responde a mensagens JSON Lines do Electron; converte datas e valores para transporte JSON; chama a lógica central e codifica arquivos gerados em Base64.
 - `app_corrigido.py`: leitura, comparação e geração das planilhas. É também usado diretamente por outras rotinas Python, portanto preserve suas funções públicas e compatibilidade com bytes de arquivos.
-- `scripts/build-windows.ps1` e `installer/AuditoriaPlanilhas.iss`: empacotamento Windows e instalador.
+- `scripts/build-windows.ps1` e `build` em `package.json`: empacotamento Windows e instalador NSIS pelo electron-builder. A versão vem exclusivamente de `package.json`; o lockfile acompanha essa versão.
 
 Fluxo principal:
 
@@ -52,8 +53,9 @@ JavaScript/desktop:
 
 - Electron (`package.json`, série 44): janela, IPC e integração nativa com o sistema.
 - `electron-builder` (série 26): empacotamento do aplicativo.
+- `electron-updater` (série 6): atualização NSIS pelo GitHub, restrita a releases estáveis com versão semanticamente maior.
 - Interface sem framework: HTML, CSS e JavaScript nativos.
-- Inno Setup 6 (`ISCC.exe`): instalador Windows; não é necessário no modo portátil.
+- NSIS: instalador Windows; as ferramentas são obtidas pelo electron-builder, sem instalação manual de Inno Setup.
 
 As dependências Python de execução estão em `requirements.txt`; as dependências Node e comandos estão em `package.json`. Evite adicionar bibliotecas para tarefas que a pilha atual resolve sem elas.
 
@@ -89,7 +91,11 @@ npm run build:windows
 npm run build:portable
 ```
 
-O build empacota a ponte Python com PyInstaller e o aplicativo com Electron Builder. O instalador completo também requer Inno Setup 6. Os comandos segmentados estão definidos em `package.json` e `scripts/build-windows.ps1`.
+O build empacota a ponte Python com PyInstaller e o aplicativo com Electron Builder para Windows x64. O build completo gera instalador NSIS por usuário, `.exe.blockmap`, `latest.yml` e ZIP portátil em `release`; o modo portátil gera apenas a pasta e o ZIP. Os nomes dos artefatos usam a versão de `package.json`. Os comandos segmentados estão definidos em `package.json` e `scripts/build-windows.ps1`.
+
+`build.publish` configura GitHub Releases de `Flerno14/AuditoriaPlanilhas`. Os comandos `build:*` usam `--publish never`; `publish:electron` envia para rascunho. `.github/workflows/release.yml` valida tags `v<versão>`, executa testes, gera a ponte e o NSIS, envia os artefatos e publica a release somente após conferir o instalador, `.blockmap` e `latest.yml`. Não sobrescreve releases já publicadas. Os secrets `CSC_LINK` e `CSC_KEY_PASSWORD` permitem assinatura; com certificado configurado, falhas de assinatura interrompem a publicação. Sem certificado, o workflow avisa que os artefatos não estão assinados.
+
+Em Configurações, a versão vem de `app.getVersion()`. Verificação, download e instalação exigem ações explícitas; não há download automático nem instalação ao fechar. Instalar exige confirmação, não ocorre durante chamadas Python pendentes e encerra a ponte antes de reiniciar. O atualizador fica desabilitado em desenvolvimento e em cópias sem o desinstalador NSIS ao lado do executável. IPC não aceita URLs, caminhos nem tokens do renderer; eventos expõem apenas o estado da atualização. Diagnósticos ficam em `userData/updates.log`. Releases devem ser públicas, sem embutir credenciais no aplicativo. Instalações Inno Setup anteriores exigem desinstalação antes de instalar a versão NSIS. Testes do fluxo: `npm test`.
 
 ## Diretrizes para alterações futuras
 
