@@ -1,0 +1,69 @@
+{
+  "name": "auditoria-planilhas",
+  "version": "1.0.3",
+  "description": "Aplicativo desktop para comparar e corrigir planilhas Excel",
+  "author": "Auditoria de Planilhas",
+  "productName": "Auditoria de Planilhas",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.cjs",
+    "build:python": "pyinstaller --clean --noconfirm --onefile --name bridge --distpath dist/python --workpath build/pyinstaller --paths . python/bridge.py",
+    "build:electron": "electron-builder --win --x64 --publish never",
+    "build:electron:dir": "electron-builder --win --x64 --dir --publish never",
+    "publish:electron": "electron-builder --win --x64 --publish always",
+    "build:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
+    "build:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -PortableOnly"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "overrides": {
+    "@electron/get": "5.1.0"
+  },
+  "build": {
+    "appId": "br.com.auditoriadeplanilhas.app",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "app.ico",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/python/bridge.exe",
+        "to": "python/bridge.exe"
+      }
+    ],
+    "win": {
+      "icon": "app.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "artifactName": "AuditoriaDePlanilhas-Setup-${version}.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerLanguages": [
+        "pt_BR"
+      ],
+      "createDesktopShortcut": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Flerno14",
+      "repo": "AuditoriaPlanilhas",
+      "releaseType": "draft"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}

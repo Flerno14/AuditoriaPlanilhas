@@ -1,56 +1,35 @@
+"""Lógica de comparação e geração de arquivos da Auditoria de Planilhas."""
 from io import BytesIO
 from pathlib import Path
 import hashlib
 
 import numpy as np
 import pandas as pd
-import streamlit as st
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 
 
-# ============================================================
-# CONFIGURAÇÃO DA APLICAÇÃO
-# ============================================================
+def sanitizar_texto_excel(texto: str) -> str:
+    """Substitui apenas caracteres proibidos em XML/Excel.
 
-st.set_page_config(
-    page_title="Auditoria de Planilhas",
-    page_icon="📊",
-    layout="wide",
-)
-
-
-# ============================================================
-# ESTILO VISUAL
-# ============================================================
-
-st.markdown(
+    Barras, acentos e demais caracteres especiais válidos são preservados.
     """
-    <style>
+    def permitido_xml(caractere: str) -> bool:
+        codigo = ord(caractere)
+        return (
+            codigo in (0x09, 0x0A, 0x0D)
+            or 0x20 <= codigo <= 0xD7FF
+            or 0xE000 <= codigo <= 0xFFFD
+            or 0x10000 <= codigo <= 0x10FFFF
+        ) and codigo not in (0xFFFE, 0xFFFF)
 
-    .main-title {
-        font-size: 32px;
-        font-weight: 700;
-        margin-bottom: 5px;
-    }
-
-    .subtitle {
-        color: #666666;
-        font-size: 16px;
-        margin-bottom: 25px;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+    return "".join(c if permitido_xml(c) else "\uFFFD" for c in texto)
 
 
 # ============================================================
 # FUNÇÕES DE LEITURA
 # ============================================================
 
-@st.cache_data(show_spinner=False)
 def obter_abas(arquivo_bytes: bytes) -> list[str]:
     """Obtém os nomes das abas existentes em um arquivo Excel."""
 
@@ -66,7 +45,6 @@ def obter_abas(arquivo_bytes: bytes) -> list[str]:
         workbook.close()
 
 
-@st.cache_data(show_spinner=False)
 def carregar_excel(
     arquivo_bytes: bytes,
     sheet_name: str,
@@ -77,6 +55,14 @@ def carregar_excel(
         BytesIO(arquivo_bytes),
         sheet_name=sheet_name,
         engine="openpyxl",
+        # Preserve valores textuais como "N/A" e "NA"; o padrão do pandas
+        # os converte em ausentes. Células realmente vazias continuam sendo
+        # normalizadas em normalizar_dataframe.
+        keep_default_na=False,
+        # A planilha corrigida pode conter texto e números na mesma coluna.
+        # Preservar object evita a conversão de uma coluna mista para string
+        # via PyArrow ("Expected bytes, got a 'int' object").
+        dtype=object,
     )
 
 
@@ -105,7 +91,7 @@ def normalizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     resultado.replace(
         r"^\s*$",
-        pd.NA,
+        np.nan,
         regex=True,
         inplace=True,
     )
@@ -131,7 +117,6 @@ def validar_colunas(
             "O Arquivo 1 possui colunas duplicadas: "
             + ", ".join(map(str, duplicadas_1))
         )
-
     if duplicadas_2:
         raise ValueError(
             "O Arquivo 2 possui colunas duplicadas: "
@@ -139,21 +124,58 @@ def validar_colunas(
         )
 
 
+def _chave_primeira_coluna(valor):
+    """Cria uma chave estável para comparar valores da primeira coluna."""
+    if pd.isna(valor):
+        return None
+    if isinstance(valor, (int, float, np.number)) and not isinstance(valor, bool):
+        try:
+            numero = float(valor)
+            if numero.is_integer():
+                return str(int(numero))
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return str(valor).strip()
+
+
+def _mapear_chaves_primeira_coluna(
+    frame: pd.DataFrame,
+    nome_arquivo: str,
+    validar_unicas: bool = True,
+) -> dict:
+    if len(frame.columns) == 0:
+        raise ValueError(f"O {nome_arquivo} não possui primeira coluna para alinhar.")
+    mapa = {}
+    for indice, valor in enumerate(frame.iloc[:, 0]):
+        chave = _chave_primeira_coluna(valor)
+        if chave is None or chave == "":
+            raise ValueError(f"A primeira coluna do {nome_arquivo} contém chave vazia na linha {indice + 2}.")
+        if chave in mapa and validar_unicas:
+            raise ValueError(f"A primeira coluna do {nome_arquivo} contém chave duplicada: {chave}.")
+        mapa.setdefault(chave, []).append(indice)
+    return mapa
+
+
 # ============================================================
 # COMPARAÇÃO
 # ============================================================
 
-@st.cache_data(show_spinner=False)
 def comparar_dataframes(
     arquivo_1_bytes: bytes,
     arquivo_2_bytes: bytes,
     sheet_name: str,
+    alinhar_primeira_coluna: bool = False,
+    validar_chaves_unicas: bool = True,
 ) -> tuple[pd.DataFrame, int]:
     """
     Compara os dois arquivos de forma vetorizada.
 
     Regras:
-    - Diferenças entre linhas que existem no Arquivo 1 aparecem na interface.
+    - Diferenças em linhas presentes nos dois arquivos aparecem na interface,
+      exceto quando o valor do Arquivo 2 está vazio: nesse caso, mantemos o
+      valor do Arquivo 1 automaticamente.
+    - Linhas que existem somente no Arquivo 1 são mantidas automaticamente
+      e não aparecem na interface.
     - Linhas que existem somente no Arquivo 2 NÃO aparecem na interface.
     - As linhas exclusivas do Arquivo 2 são tratadas automaticamente como
       "Usar Arquivo 2" e serão adicionadas ao arquivo corrigido.
@@ -173,13 +195,35 @@ def comparar_dataframes(
 
     validar_colunas(df1, df2)
 
+    if alinhar_primeira_coluna:
+        chaves_1 = _mapear_chaves_primeira_coluna(df1, "Arquivo 1", validar_chaves_unicas)
+        chaves_2 = _mapear_chaves_primeira_coluna(df2, "Arquivo 2", validar_chaves_unicas)
+        ocorrencias_1 = {}
+        pares = []
+        for indice_1, valor in enumerate(df1.iloc[:, 0]):
+            chave = _chave_primeira_coluna(valor)
+            ocorrencia = ocorrencias_1.get(chave, 0)
+            ocorrencias_1[chave] = ocorrencia + 1
+            indices_correspondentes = chaves_2.get(chave, [])
+            if ocorrencia < len(indices_correspondentes):
+                pares.append((indice_1, indices_correspondentes[ocorrencia]))
+        ocorrencias_2 = {}
+        indices_2_novos = []
+        for indice_2, valor in enumerate(df2.iloc[:, 0]):
+            chave = _chave_primeira_coluna(valor)
+            ocorrencia = ocorrencias_2.get(chave, 0)
+            ocorrencias_2[chave] = ocorrencia + 1
+            if ocorrencia >= len(chaves_1.get(chave, [])):
+                indices_2_novos.append(indice_2)
+        quantidade_linhas_novas = len(indices_2_novos)
+    else:
+        pares = [(indice, indice) for indice in range(min(len(df1), len(df2)))]
+        indices_2_novos = list(range(len(df1), len(df2)))
+
     quantidade_linhas_arquivo_1 = len(df1)
     quantidade_linhas_arquivo_2 = len(df2)
-
-    quantidade_linhas_novas = max(
-        0,
-        quantidade_linhas_arquivo_2 - quantidade_linhas_arquivo_1,
-    )
+    if not alinhar_primeira_coluna:
+        quantidade_linhas_novas = max(0, quantidade_linhas_arquivo_2 - quantidade_linhas_arquivo_1)
 
     # Mantemos a comparação do tamanho máximo para continuar detectando
     # também linhas que existam somente no Arquivo 1 (possíveis remoções).
@@ -188,47 +232,51 @@ def comparar_dataframes(
         quantidade_linhas_arquivo_2,
     )
 
-    indices = pd.RangeIndex(
-        start=0,
-        stop=quantidade_linhas,
-    )
-
     todas_colunas = df1.columns.union(
         df2.columns,
         sort=False,
     )
 
-    alinhado_1 = df1.reindex(
-        index=indices,
-        columns=todas_colunas,
-    )
+    if alinhar_primeira_coluna:
+        linhas_1 = [par[0] for par in pares]
+        linhas_2 = [par[1] for par in pares]
+        alinhado_1 = df1.iloc[linhas_1].reindex(columns=todas_colunas).reset_index(drop=True)
+        alinhado_2 = df2.iloc[linhas_2].reindex(columns=todas_colunas).reset_index(drop=True)
+    else:
+        indices = pd.RangeIndex(start=0, stop=quantidade_linhas)
+        alinhado_1 = df1.reindex(index=indices, columns=todas_colunas)
+        alinhado_2 = df2.reindex(index=indices, columns=todas_colunas)
 
-    alinhado_2 = df2.reindex(
-        index=indices,
-        columns=todas_colunas,
-    )
-
-    iguais = alinhado_1.eq(alinhado_2)
+    # Materialize comparison results as ordinary booleans before combining
+    # masks; nullable pandas booleans can carry pd.NA into boolean operators.
+    iguais = alinhado_1.eq(alinhado_2).fillna(False)
 
     ambos_vazios = (
         alinhado_1.isna()
         & alinhado_2.isna()
     )
 
-    diferenca = ~(iguais | ambos_vazios)
-    diferenca = diferenca.fillna(True)
+    # Um valor vazio no Arquivo 2 significa manter o valor original. Isso
+    # também cobre linhas inteiras que existem apenas no Arquivo 1.
+    manter_arquivo_1 = alinhado_1.notna() & alinhado_2.isna()
+    diferenca = ~(iguais | ambos_vazios | manter_arquivo_1)
+    # Comparações de colunas ``object`` podem produzir pd.NA. NumPy não
+    # consegue decidir o valor booleano de pd.NA, portanto a máscara precisa
+    # ser materializada explicitamente como bool antes de usar np.where.
+    mascara_diferencas = diferenca.to_numpy(dtype=bool, na_value=True)
 
-    linhas, colunas = np.where(diferenca.to_numpy())
+    linhas, colunas = np.where(mascara_diferencas)
 
-    # IMPORTANTÍSSIMO:
-    # uma linha que existe somente no Arquivo 2 é uma inclusão automática,
-    # portanto não deve aparecer como diferença célula a célula na interface.
-    # Já uma linha que existe somente no Arquivo 1 continua sendo exibida,
-    # pois representa uma possível remoção.
-    somente_linhas_do_arquivo_1 = linhas < quantidade_linhas_arquivo_1
-
-    linhas = linhas[somente_linhas_do_arquivo_1]
-    colunas = colunas[somente_linhas_do_arquivo_1]
+    # Linhas exclusivas de qualquer arquivo não são listadas: as do Arquivo 2
+    # são adicionadas automaticamente, e as do Arquivo 1 ficam preservadas.
+    if alinhar_primeira_coluna:
+        linhas_planilha = np.array([par[0] for par in pares], dtype=int)
+    else:
+        quantidade_linhas_compartilhadas = min(quantidade_linhas_arquivo_1, quantidade_linhas_arquivo_2)
+        somente_linhas_compartilhadas = linhas < quantidade_linhas_compartilhadas
+        linhas = linhas[somente_linhas_compartilhadas]
+        colunas = colunas[somente_linhas_compartilhadas]
+        linhas_planilha = np.arange(quantidade_linhas_compartilhadas, dtype=int)
 
     if len(linhas) == 0:
         return (
@@ -246,7 +294,7 @@ def comparar_dataframes(
 
     relatorio = pd.DataFrame(
         {
-            "Índice/Linha": linhas + 2,
+            "Índice/Linha": linhas_planilha[linhas] + 2,
             "Nome da Coluna": todas_colunas.to_numpy()[colunas],
             "Valor no Arquivo 1": alinhado_1.to_numpy()[
                 linhas, colunas
@@ -268,11 +316,14 @@ def comparar_dataframes(
 def normalizar_valor_excel(valor):
     """Converte valores pandas para valores aceitos pelo openpyxl."""
 
-    if valor is None:
+    if valor is None or valor is pd.NA:
         return None
 
     try:
-        if pd.isna(valor):
+        # pd.isna(pd.NA) returns pd.NA, whose boolean value is ambiguous.
+        # Only scalar boolean results identify an empty Excel cell here.
+        ausente = pd.isna(valor)
+        if not hasattr(ausente, "__len__") and bool(ausente):
             return None
     except (TypeError, ValueError):
         pass
@@ -281,7 +332,10 @@ def normalizar_valor_excel(valor):
         return valor.to_pydatetime()
 
     if isinstance(valor, np.generic):
-        return valor.item()
+        valor = valor.item()
+
+    if isinstance(valor, str):
+        return sanitizar_texto_excel(valor)
 
     return valor
 
@@ -327,6 +381,9 @@ def gerar_arquivo_corrigido(
     nome_arquivo_original: str,
     incluir_linhas_novas: bool = True,
     marcar_alteracoes_laranja: bool = False,
+    cor_alteracoes: str = "#FFA500",
+    alinhar_primeira_coluna: bool = False,
+    validar_chaves_unicas: bool = True,
 ) -> tuple[bytes, int, int]:
     """
     Cria uma cópia do Arquivo 1, aplica as decisões do usuário e
@@ -428,7 +485,7 @@ def gerar_arquivo_corrigido(
             if marcar_alteracoes_laranja and valor_anterior != novo_valor:
                 celula.fill = PatternFill(
                     fill_type="solid",
-                    fgColor="FFFFA500",
+                    fgColor="FF" + cor_alteracoes.lstrip("#").upper(),
                 )
 
             quantidade_alteracoes += 1
@@ -440,22 +497,33 @@ def gerar_arquivo_corrigido(
         quantidade_linhas_arquivo_1 = len(df_original)
         quantidade_linhas_arquivo_2 = len(df_modificado)
 
-        quantidade_linhas_novas = max(
-            0,
-            quantidade_linhas_arquivo_2 - quantidade_linhas_arquivo_1,
-        )
+        if alinhar_primeira_coluna:
+            chaves_1 = _mapear_chaves_primeira_coluna(df_original, "Arquivo 1", validar_chaves_unicas)
+            _mapear_chaves_primeira_coluna(df_modificado, "Arquivo 2", validar_chaves_unicas)
+            ocorrencias_2 = {}
+            indices_linhas_novas = []
+            for indice, valor in enumerate(df_modificado.iloc[:, 0]):
+                chave = _chave_primeira_coluna(valor)
+                ocorrencia = ocorrencias_2.get(chave, 0)
+                ocorrencias_2[chave] = ocorrencia + 1
+                if ocorrencia >= len(chaves_1.get(chave, [])):
+                    indices_linhas_novas.append(indice)
+            quantidade_linhas_novas = len(indices_linhas_novas)
+        else:
+            quantidade_linhas_novas = max(0, quantidade_linhas_arquivo_2 - quantidade_linhas_arquivo_1)
+            indices_linhas_novas = list(range(quantidade_linhas_arquivo_1, quantidade_linhas_arquivo_2))
 
         if incluir_linhas_novas and quantidade_linhas_novas > 0:
 
             # Os dados começam na linha 2, pois a linha 1 é o cabeçalho.
-            primeira_linha_nova = quantidade_linhas_arquivo_1 + 2
+            primeira_linha_nova = max(quantidade_linhas_arquivo_1 + 2, worksheet.max_row + 1)
 
             # Preserva a formatação da última linha existente sempre que
             # possível.
             ultima_linha_existente = quantidade_linhas_arquivo_1 + 1
 
             for deslocamento, indice_df2 in enumerate(
-                range(quantidade_linhas_arquivo_1, quantidade_linhas_arquivo_2)
+                indices_linhas_novas
             ):
 
                 linha_excel = primeira_linha_nova + deslocamento
@@ -519,515 +587,3 @@ def gerar_id_comparacao(
     return hashlib.md5(conteudo).hexdigest()
 
 
-# ============================================================
-# INTERFACE
-# ============================================================
-
-st.markdown(
-    '<div class="main-title">📊 Auditoria de Planilhas Excel</div>',
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    '<div class="subtitle">'
-    'Compare duas versões de uma planilha, escolha o valor correto '
-    'para cada diferença e gere uma versão corrigida.'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================
-# UPLOAD DOS ARQUIVOS
-# ============================================================
-
-col1, col2 = st.columns(2)
-
-with col1:
-    arquivo_1 = st.file_uploader(
-        "📁 Arquivo 1 — Original",
-        type=["xlsx", "xlsm"],
-        key="arquivo_1",
-    )
-
-with col2:
-    arquivo_2 = st.file_uploader(
-        "📁 Arquivo 2 — Modificado",
-        type=["xlsx", "xlsm"],
-        key="arquivo_2",
-    )
-
-
-if arquivo_1 is None or arquivo_2 is None:
-    st.info(
-        "Selecione os dois arquivos Excel para iniciar a comparação."
-    )
-    st.stop()
-
-
-# ============================================================
-# CONVERSÃO PARA BYTES
-# ============================================================
-
-arquivo_1_bytes = arquivo_1.getvalue()
-arquivo_2_bytes = arquivo_2.getvalue()
-
-
-# ============================================================
-# VERIFICAÇÃO DAS ABAS
-# ============================================================
-
-try:
-    abas_1 = obter_abas(arquivo_1_bytes)
-    abas_2 = obter_abas(arquivo_2_bytes)
-
-except Exception as erro:
-    st.error(f"Não foi possível abrir os arquivos: {erro}")
-    st.stop()
-
-
-abas_comuns = [
-    aba for aba in abas_1 if aba in abas_2
-]
-
-if not abas_comuns:
-    st.error(
-        "Os arquivos não possuem nenhuma aba com o mesmo nome."
-    )
-    st.warning(
-        "Abas do Arquivo 1: " + ", ".join(abas_1) + "\n\n"
-        "Abas do Arquivo 2: " + ", ".join(abas_2)
-    )
-    st.stop()
-
-
-# ============================================================
-# SELEÇÃO DA ABA
-# ============================================================
-
-col_aba, col_info = st.columns([2, 4])
-
-with col_aba:
-    sheet_name = st.selectbox(
-        "📄 Aba para comparar",
-        options=abas_comuns,
-        key="aba_comparacao",
-    )
-
-with col_info:
-    abas_somente_1 = [
-        aba for aba in abas_1 if aba not in abas_2
-    ]
-    abas_somente_2 = [
-        aba for aba in abas_2 if aba not in abas_1
-    ]
-
-    if abas_somente_1 or abas_somente_2:
-        mensagem = "⚠️ Diferenças de estrutura entre abas:\n"
-
-        if abas_somente_1:
-            mensagem += (
-                "- Somente no Arquivo 1: "
-                + ", ".join(abas_somente_1)
-                + "\n"
-            )
-
-        if abas_somente_2:
-            mensagem += (
-                "- Somente no Arquivo 2: "
-                + ", ".join(abas_somente_2)
-            )
-
-        st.warning(mensagem)
-
-
-# ============================================================
-# COMPARAÇÃO
-# ============================================================
-
-with st.spinner("Comparando as planilhas..."):
-    try:
-        relatorio, quantidade_linhas_novas = comparar_dataframes(
-            arquivo_1_bytes,
-            arquivo_2_bytes,
-            sheet_name,
-        )
-
-    except Exception as erro:
-        st.error(f"Erro durante a comparação: {erro}")
-        st.stop()
-
-
-# A comparação pode não ter nenhuma diferença célula a célula e ainda
-# possuir novas linhas no Arquivo 2. Nesse caso, a geração continua
-# normalmente e as novas linhas serão adicionadas automaticamente.
-if relatorio.empty and quantidade_linhas_novas == 0:
-    st.success(
-        "✅ Nenhuma diferença foi encontrada nesta aba."
-    )
-    st.stop()
-
-if quantidade_linhas_novas > 0:
-    st.info(
-        f"➕ {quantidade_linhas_novas} linha(s) existente(s) somente no "
-        "Arquivo 2 serão adicionada(s) automaticamente ao arquivo corrigido. "
-        "Essas linhas não aparecem na tabela de decisões."
-    )
-
-
-# ============================================================
-# CONFIGURAÇÃO DA TABELA
-# ============================================================
-
-tabela_inicial = relatorio.copy()
-quantidade_total = len(tabela_inicial)
-
-# Chave muda quando os arquivos ou a aba mudam.
-# Isso impede que decisões antigas sejam reaproveitadas.
-id_comparacao = gerar_id_comparacao(
-    arquivo_1_bytes,
-    arquivo_2_bytes,
-    sheet_name,
-)
-
-chave_tabela = f"tabela_diferencas_{id_comparacao}"
-chave_dados_tabela = f"dados_{chave_tabela}"
-chave_versao_tabela = f"versao_{chave_tabela}"
-st.session_state.setdefault(chave_dados_tabela, tabela_inicial.copy())
-st.session_state.setdefault(chave_versao_tabela, 0)
-
-
-# ============================================================
-# INSTRUÇÕES / TABELA EDITÁVEL
-# ============================================================
-
-if not tabela_inicial.empty:
-
-    col_status_global, col_aplicar_global = st.columns([2, 1])
-    with col_status_global:
-        status_para_todos = st.selectbox(
-            "Aplicar decisão a todas as diferenças",
-            options=["Manter Arquivo 1", "Usar Arquivo 2", "Pendente"],
-            key=f"status_todos_{id_comparacao}",
-        )
-    with col_aplicar_global:
-        st.markdown("\u00a0")
-        if st.button("Aplicar a todos", key=f"aplicar_status_todos_{id_comparacao}"):
-            tabela_com_status_global = tabela_inicial.copy()
-            tabela_com_status_global["Decisão"] = status_para_todos
-            st.session_state[chave_dados_tabela] = tabela_com_status_global
-            st.session_state[chave_versao_tabela] += 1
-
-    st.markdown(
-        """
-        ### 🔎 Decida cada diferença
-
-        Para cada célula alterada, escolha:
-
-        **Manter Arquivo 1** → mantém o valor original.
-
-        **Usar Arquivo 2** → substitui o valor do Arquivo 1 pelo
-        valor existente no Arquivo 2.
-
-        As linhas que existem somente no Arquivo 2 são adicionadas
-        automaticamente e não precisam de decisão manual.
-        """
-    )
-
-    tabela_editada = st.data_editor(
-        st.session_state[chave_dados_tabela],
-        key=f"{chave_tabela}_{st.session_state[chave_versao_tabela]}",
-        hide_index=True,
-        width="stretch",
-        height=650,
-        row_height=55,
-        disabled=[
-            "Índice/Linha",
-            "Nome da Coluna",
-            "Valor no Arquivo 1",
-            "Valor no Arquivo 2",
-        ],
-        column_config={
-            "Índice/Linha": st.column_config.NumberColumn(
-                "Linha",
-                width="small",
-            ),
-            "Nome da Coluna": st.column_config.TextColumn(
-                "Coluna",
-                width="medium",
-            ),
-            "Valor no Arquivo 1": st.column_config.TextColumn(
-                "Arquivo 1 — Original",
-                width="large",
-            ),
-            "Valor no Arquivo 2": st.column_config.TextColumn(
-                "Arquivo 2 — Modificado",
-                width="large",
-            ),
-            "Decisão": st.column_config.SelectboxColumn(
-                "✅ Decisão",
-                help=(
-                    "Escolha qual valor deverá permanecer "
-                    "no arquivo corrigido."
-                ),
-                options=[
-                    "Pendente",
-                    "Manter Arquivo 1",
-                    "Usar Arquivo 2",
-                ],
-                required=True,
-                width="medium",
-            ),
-        },
-    )
-
-else:
-    tabela_editada = pd.DataFrame(
-        columns=[
-            "Índice/Linha",
-            "Nome da Coluna",
-            "Valor no Arquivo 1",
-            "Valor no Arquivo 2",
-            "Decisão",
-        ]
-    )
-
-    st.success(
-        "✅ Não há diferenças de células para decidir manualmente."
-    )
-
-
-# ============================================================
-# CONTADORES
-# ============================================================
-
-quantidade_pendente = int(
-    tabela_editada["Decisão"].eq("Pendente").sum()
-)
-
-usar_arquivo_2_manual = int(
-    tabela_editada["Decisão"].eq("Usar Arquivo 2").sum()
-)
-
-manter_arquivo_1 = int(
-    tabela_editada["Decisão"].eq("Manter Arquivo 1").sum()
-)
-
-# Linhas novas não passam pela tabela: são automaticamente consideradas
-# como "Usar Arquivo 2".
-usar_arquivo_2 = usar_arquivo_2_manual + quantidade_linhas_novas
-
-
-# ============================================================
-# MÉTRICAS
-# ============================================================
-
-st.divider()
-
-m1, m2, m3, m4 = st.columns(4)
-
-with m1:
-    st.metric("Diferenças", quantidade_total)
-
-with m2:
-    st.metric("Pendentes", quantidade_pendente)
-
-with m3:
-    st.metric("Usar Arquivo 2", usar_arquivo_2)
-
-with m4:
-    st.metric("Manter Arquivo 1", manter_arquivo_1)
-
-
-# ============================================================
-# RESUMO E BOTÃO
-# ============================================================
-
-col_resumo, col_exportar, col_botao = st.columns([3, 2, 2])
-
-with col_resumo:
-    st.markdown(
-        f"""
-        **Resumo das decisões**
-
-        Total de diferenças: **{quantidade_total}**
-
-        Pendentes: **{quantidade_pendente}**
-
-        Manter Arquivo 1: **{manter_arquivo_1}**
-
-        Usar Arquivo 2: **{usar_arquivo_2}**
-
-        Inclusões automáticas: **{quantidade_linhas_novas} linha(s)**
-        """
-    )
-
-with col_exportar:
-    if not tabela_editada.empty:
-        arquivo_diferencas = BytesIO()
-        with pd.ExcelWriter(arquivo_diferencas, engine="openpyxl") as writer:
-            tabela_editada.to_excel(
-                writer,
-                index=False,
-                sheet_name="Diferenças",
-            )
-
-        st.download_button(
-            label="📥 EXPORTAR DIFERENÇAS",
-            data=arquivo_diferencas.getvalue(),
-            file_name="diferencas_entre_arquivos.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key=f"exportar_diferencas_{id_comparacao}",
-        )
-
-        arquivo_escolhas = BytesIO()
-        if quantidade_pendente == 0:
-            mudancas_aplicadas = tabela_editada.apply(
-                lambda linha: (
-                    linha["Valor no Arquivo 2"]
-                    if linha["Decisão"] == "Usar Arquivo 2"
-                    else linha["Valor no Arquivo 1"]
-                ),
-                axis=1,
-            )
-            tabela_escolhas = pd.DataFrame(
-                {
-                    "Linha": tabela_editada["Índice/Linha"],
-                    "Coluna": tabela_editada["Nome da Coluna"],
-                    "Mudanças Aplicadas": mudancas_aplicadas,
-                }
-            )
-            with pd.ExcelWriter(arquivo_escolhas, engine="openpyxl") as writer:
-                tabela_escolhas.to_excel(
-                    writer,
-                    index=False,
-                    sheet_name="Conteúdo escolhido",
-                )
-
-        st.download_button(
-            label="📥 EXPORTAR ESCOLHAS",
-            data=arquivo_escolhas.getvalue(),
-            file_name="mudancas_aplicadas.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            disabled=quantidade_pendente > 0,
-            help=(
-                "Escolha uma opção para todas as diferenças antes de exportar."
-                if quantidade_pendente > 0
-                else "Exporta linha, coluna e conteúdo selecionado para cada diferença."
-            ),
-            key=f"exportar_escolhas_{id_comparacao}",
-        )
-
-        arquivo_apenas_alteracoes = None
-        if quantidade_pendente == 0:
-            arquivo_apenas_alteracoes, _, _ = gerar_arquivo_corrigido(
-                arquivo_1_bytes=arquivo_1_bytes,
-                arquivo_2_bytes=arquivo_2_bytes,
-                relatorio_original=relatorio,
-                decisoes=tabela_editada,
-                sheet_name=sheet_name,
-                nome_arquivo_original=arquivo_1.name,
-                incluir_linhas_novas=False,
-                marcar_alteracoes_laranja=True,
-            )
-
-        nome_apenas_alteracoes = (
-            Path(arquivo_1.name).stem
-            + "_somente_alteracoes"
-            + Path(arquivo_1.name).suffix
-        )
-        st.download_button(
-            label="📥 EXPORTAR ARQUIVO 1 ALTERADO",
-            data=arquivo_apenas_alteracoes or b"",
-            file_name=nome_apenas_alteracoes,
-            mime=(
-                "application/vnd.ms-excel.sheet.macroEnabled.12"
-                if Path(arquivo_1.name).suffix.lower() == ".xlsm"
-                else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
-            use_container_width=True,
-            disabled=quantidade_pendente > 0,
-            help=(
-                "Resolve todas as decisões para exportar."
-                if quantidade_pendente > 0
-                else "Exporta uma cópia do Arquivo 1 com as células escolhidas como 'Usar Arquivo 2'. Não inclui linhas novas."
-            ),
-            key=f"exportar_arquivo1_alterado_{id_comparacao}",
-        )
-
-with col_botao:
-    gerar = st.button(
-        "🚀 GERAR ARQUIVO CORRIGIDO",
-        type="primary",
-        use_container_width=True,
-        key=f"gerar_{id_comparacao}",
-    )
-
-
-# ============================================================
-# GERAÇÃO DO ARQUIVO
-# ============================================================
-
-if gerar:
-    if quantidade_pendente > 0:
-        st.error(
-            f"Existem {quantidade_pendente} diferença(s) sem decisão."
-        )
-        st.warning(
-            "Escolha 'Manter Arquivo 1' ou 'Usar Arquivo 2' "
-            "para todas as diferenças."
-        )
-        st.stop()
-
-    with st.spinner("Gerando arquivo corrigido..."):
-        try:
-            (
-                arquivo_corrigido,
-                quantidade_alteracoes,
-                quantidade_linhas_adicionadas,
-            ) = gerar_arquivo_corrigido(
-                arquivo_1_bytes=arquivo_1_bytes,
-                arquivo_2_bytes=arquivo_2_bytes,
-                relatorio_original=relatorio,
-                decisoes=tabela_editada,
-                sheet_name=sheet_name,
-                nome_arquivo_original=arquivo_1.name,
-            )
-
-        except Exception as erro:
-            st.error(
-                f"Erro ao gerar o arquivo corrigido: {erro}"
-            )
-            st.stop()
-
-    nome_original = Path(arquivo_1.name)
-
-    nome_saida = (
-        nome_original.stem
-        + "_corrigido"
-        + nome_original.suffix
-    )
-
-    mime = (
-        "application/vnd.ms-excel.sheet.macroEnabled.12"
-        if nome_original.suffix.lower() == ".xlsm"
-        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-    st.success(
-        "✅ Arquivo corrigido gerado com sucesso! "
-        f"{quantidade_alteracoes} célula(s) foram alteradas e "
-        f"{quantidade_linhas_adicionadas} linha(s) nova(s) foram adicionadas automaticamente."
-    )
-
-    st.download_button(
-        label="⬇️ BAIXAR ARQUIVO CORRIGIDO",
-        data=arquivo_corrigido,
-        file_name=nome_saida,
-        mime=mime,
-        type="primary",
-        use_container_width=True,
-        key=f"download_{id_comparacao}_{quantidade_alteracoes}",
-    )

@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Saídas do PyInstaller
+build/
+dist/
+release/
+
+# Electron / Node.js
+node_modules/
+npm-debug.log*
+
+# Arquivos temporários do sistema
+Thumbs.db
+desktop.ini
+
+# Instalador gerado pelo build
+installer/{%USERPROFILE}/

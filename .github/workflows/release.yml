@@ -1,0 +1,81 @@
+name: Publicar versão Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Conferir versão e tag
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$' -or $env:GITHUB_REF_NAME -cne "v$version") {
+            throw 'A tag deve corresponder à versão estável de package.json (v<versão>).'
+          }
+          "APP_VERSION=$version" >> $env:GITHUB_ENV
+      - run: npm ci
+      - run: npm test
+      - name: Preparar ponte Python
+        run: |
+          python -m pip install -r requirements.txt pyinstaller
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build:python
+      - name: Impedir substituição de versão já publicada
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $release = gh release view $env:GITHUB_REF_NAME --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0 -and -not ($release | ConvertFrom-Json).isDraft) {
+            throw 'Esta versão já foi publicada. Incremente package.json e crie uma nova tag.'
+          }
+          $global:LASTEXITCODE = 0
+      - name: Gerar NSIS e enviar artefatos para rascunho
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          if ($env:CSC_LINK) {
+            npm run publish:electron -- --config.forceCodeSigning=true
+          } else {
+            Write-Warning 'CSC_LINK não configurado. O instalador será gerado sem assinatura digital.'
+            npm run publish:electron
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Conferir artefatos e publicar release completa
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $expected = @("AuditoriaDePlanilhas-Setup-$env:APP_VERSION.exe", "AuditoriaDePlanilhas-Setup-$env:APP_VERSION.exe.blockmap", 'latest.yml')
+          $release = gh release view $env:GITHUB_REF_NAME --json assets,isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not $release.isDraft) { throw 'A release deve permanecer em rascunho até concluir todos os envios.' }
+          foreach ($file in $expected) {
+            if (-not (Test-Path -LiteralPath "release/$file" -PathType Leaf) -or $file -notin $release.assets.name) {
+              throw "Artefato ausente: $file"
+            }
+          }
+          gh release edit $env:GITHUB_REF_NAME --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

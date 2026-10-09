@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auditoria de Planilhas</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="filter.css">
+  <link rel="stylesheet" href="settings-control.css">
+</head>
+<body>
+  <header class="topbar"><span class="brand-mark">▦</span><strong>Planilha</strong><span class="topbar-subtitle">Central de auditoria</span><button class="outline settings-trigger" id="open-settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙ Configurações</button></header>
+  <main class="app-shell" id="app-shell">
+    <div class="eyebrow">AUDITORIA DE PLANILHAS</div>
+    <h1>Compare versões com clareza.</h1>
+    <p class="intro">Revise diferenças, escolha os dados corretos e gere uma planilha corrigida.</p>
+
+    <section class="card files-card">
+      <div class="file-row"><strong>ARQUIVO 1</strong><button class="outline" id="choose1">Escolher arquivo</button><span class="file-name" id="file1-name">Nenhum arquivo selecionado</span></div>
+      <div class="file-row"><strong>ARQUIVO 2</strong><button class="outline" id="choose2">Escolher arquivo</button><span class="file-name" id="file2-name">Nenhum arquivo selecionado</span></div>
+    </section>
+
+    <section class="card sheet-card"><label for="sheet">Aba da planilha</label><select id="sheet" disabled></select><button class="primary" id="compare">Comparar planilhas</button><span class="hint" id="compare-hint">As linhas são comparadas por posição. Se foram reordenadas, ative “Alinhar pela primeira coluna” nas configurações.</span></section>
+
+    <section class="card differences-card">
+      <div class="table-toolbar"><strong>Diferenças encontradas</strong><div class="bulk"><label for="bulk-choice">Definir decisão:</label><select id="bulk-choice"><option>Manter Arquivo 1</option><option>Usar Arquivo 2</option></select><button class="outline compact" id="apply">Aplicar</button></div></div>
+      <div class="filter-toolbar"><label class="search-box" for="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Pesquisar diferenças" autocomplete="off"></label><button class="match-case" id="match-case" type="button" aria-pressed="false" aria-label="Diferenciar maiúsculas e minúsculas" title="Diferenciar maiúsculas e minúsculas">Aa</button><span class="filter-count" id="filter-count" aria-live="polite">0 de 0</span><label for="bulk-scope">Aplicar em:</label><select id="bulk-scope"><option value="all">Todas as diferenças</option><option value="filtered">Itens filtrados</option></select></div>
+      <div class="table-wrap"><table><thead><tr><th>Linha</th><th>Coluna</th><th>Arquivo 1 — Original</th><th>Arquivo 2 — Modificado</th><th>Decisão</th></tr></thead><tbody id="rows"><tr class="empty"><td colspan="5">Selecione dois arquivos Excel para começar.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="card summary" id="summary">Selecione os dois arquivos Excel para começar.</section>
+    <footer class="actions"><button class="outline" id="export-differences">Exportar tabela de diferenças</button><button class="outline" id="export-choices">Exportar tabela de escolhas</button><button class="outline" id="save-changes">Gerar arquivo marcando alterações</button><button class="primary" id="generate">Gerar arquivo corrigido</button></footer>
+  </main>
+  <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
+    <form method="dialog" class="settings-form">
+      <div class="settings-heading"><div><div class="eyebrow">PREFERÊNCIAS DO PROJETO</div><h2 id="settings-title">Configurações</h2></div><button class="icon-button" aria-label="Fechar configurações">×</button></div>
+      <section class="settings-section"><h3>Modelos de exportação</h3><p>Escolha uma planilha para servir de base a cada relatório. Os dados serão preenchidos no primeiro separador.</p>
+        <div class="setting-field">Modelo de diferenças</div><div class="template-picker"><span id="template-differences-name">Nenhum modelo selecionado</span><button type="button" class="outline compact" data-template="differences">Escolher arquivo</button><button type="button" class="text-button" data-clear-template="differences">Remover</button></div>
+        <div class="setting-field">Modelo de escolhas</div><div class="template-picker"><span id="template-choices-name">Nenhum modelo selecionado</span><button type="button" class="outline compact" data-template="choices">Escolher arquivo</button><button type="button" class="text-button" data-clear-template="choices">Remover</button></div>
+      </section>
+      <section class="settings-section"><h3>Marcação das alterações</h3><p>Cor usada para destacar as células alteradas pelo botão “Salvar alterações”.</p><label class="color-setting" for="change-color"><input id="change-color" type="color" value="#FFA500"><span>Cor de destaque</span><code id="change-color-value">#FFA500</code></label></section>
+      <section class="settings-section"><h3>Alinhamento das linhas</h3><p>Use o valor da primeira coluna para comparar registros mesmo quando estiverem em posições diferentes. Valores vazios nessa coluna continuam inválidos para o alinhamento.</p><label class="alignment-setting" for="align-first-column"><input id="align-first-column" type="checkbox"><span>Alinhar pela primeira coluna</span></label><label class="alignment-setting alignment-subsetting" for="validate-unique-first-column"><input id="validate-unique-first-column" type="checkbox" checked><span>Exigir valores únicos na primeira coluna</span></label><p class="setting-note">Com o alinhamento ativo e esta validação desativada, ocorrências repetidas são associadas na ordem em que aparecem.</p></section>
+      <section class="settings-section" aria-labelledby="updates-title"><h3 id="updates-title">Atualizações</h3>
+        <p>Versão atual: <strong id="current-version">Carregando...</strong></p>
+        <p id="update-status" role="status" aria-live="polite">Carregando informações de atualização...</p>
+        <progress id="update-progress" max="100" value="0" aria-label="Progresso do download da atualização" hidden></progress>
+        <div class="update-actions"><button type="button" class="outline" id="check-updates" disabled>Verificar atualizações</button><button type="button" class="primary" id="download-update" hidden>Baixar atualização</button><button type="button" class="primary" id="install-update" hidden>Instalar e reiniciar</button></div>
+        <p class="update-note">Salve seu trabalho antes de instalar. O aplicativo será fechado e reiniciado.</p>
+      </section>
+      <div class="settings-actions"><button type="button" class="outline" id="cancel-settings">Cancelar</button><button type="button" class="primary" id="save-settings">Salvar configurações</button></div>
+    </form>
+  </dialog>
+  <div class="loading-overlay" id="loading-overlay" role="status" aria-live="polite" aria-atomic="true" hidden>
+    <div class="loading-card"><span class="loading-spinner" aria-hidden="true"></span><div class="loading-copy"><strong id="loading-message">Processando...</strong><span>Isso pode levar alguns instantes.</span></div><div class="loading-progress" aria-hidden="true"><span></span></div></div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="renderer.js"></script>
+  <script src="updates.js"></script>
+</body>
+</html>
