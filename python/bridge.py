@@ -1,5 +1,6 @@
 """Ponte JSON Lines entre Electron e a lógica de planilhas em Python."""
 import base64
+import hashlib
 from datetime import date, datetime
 from io import BytesIO
 import json
@@ -98,7 +99,7 @@ def export_frame(frame, template_path=None):
     if not template.is_file():
         raise ValueError(f"O modelo de exportação não foi encontrado: {template}")
     workbook = load_workbook(template)
-    sheet = workbook.active
+    sheet = workbook.worksheets[0]
     for row_index, values in enumerate([list(frame.columns), *frame.itertuples(index=False, name=None)], start=1):
         for column_index, value in enumerate(values, start=1):
             cell = sheet.cell(row=row_index, column=column_index)
@@ -108,26 +109,73 @@ def export_frame(frame, template_path=None):
     return output.getvalue()
 
 
+def session_fingerprint(first, second, data):
+    aligned = bool(data.get('alignByFirstColumn', False))
+    context = [data['sheet'], aligned,
+               bool(data.get('validateUniqueFirstColumn', True)) if aligned else False]
+    identity = [hashlib.sha256(first).hexdigest(), hashlib.sha256(second).hexdigest(), context]
+    return hashlib.sha256(json.dumps(identity, ensure_ascii=True).encode('utf-8')).hexdigest()
+
+
+def checked_session_files(data):
+    try:
+        first = Path(data['file1']).read_bytes()
+        second = Path(data['file2']).read_bytes()
+    except OSError as error:
+        raise ValueError('Não foi possível acessar os arquivos da revisão. Verifique se foram movidos, removidos ou estão indisponíveis.') from error
+    if data.get('fingerprint') != session_fingerprint(first, second, data):
+        raise ValueError('Os arquivos ou as regras mudaram desde a comparação. As decisões antigas não podem ser aplicadas. Compare novamente para iniciar uma nova revisão.')
+    return first, second
+
+
+def report_progress(data, message):
+    if data.get('reportProgress'):
+        sys.stdout.write(json.dumps({'id': data['id'], 'progress': message}, ensure_ascii=True) + '\n')
+        sys.stdout.flush()
+
+
 def execute(action, data):
+    report_progress(data, 'Lendo arquivos e verificando a solicitação...')
+    if action == 'preview-new-rows':
+        first, second = checked_session_files(data)
+        report_progress(data, 'Preparando as linhas novas para visualização...')
+        df1 = core.normalizar_dataframe(core.carregar_excel(first, data['sheet'], 'Arquivo 1'))
+        df2 = core.normalizar_dataframe(core.carregar_excel(second, data['sheet'], 'Arquivo 2'))
+        aligned = bool(data.get('alignByFirstColumn', False))
+        unique = bool(data.get('validateUniqueFirstColumn', True))
+        core.validar_colunas(df1, df2, aligned)
+        indices = core.obter_indices_linhas_novas(df1, df2, aligned, unique)
+        rows = df2.reindex(columns=df1.columns).iloc[indices]
+        return {'columns': list(df1.columns), 'rows': [
+            {'line': index + 2, 'values': [json_value(value) for value in values]}
+            for index, values in zip(indices, rows.itertuples(index=False, name=None))
+        ]}
+    if action == 'validate-session':
+        checked_session_files(data)
+        return True
     if action == "sheets":
         return core.obter_abas(Path(data["path"]).read_bytes())
 
     if action == "compare":
         first = Path(data["file1"]).read_bytes()
         second = Path(data["file2"]).read_bytes()
+        report_progress(data, 'Validando a estrutura e comparando os dados da aba...')
         report, new_rows = core.comparar_dataframes(
             first, second, data["sheet"],
             alinhar_primeira_coluna=bool(data.get("alignByFirstColumn", False)),
             validar_chaves_unicas=bool(data.get("validateUniqueFirstColumn", True)),
         )
-        return {"report": dataframe_rows(report), "newRows": new_rows}
+        report_progress(data, 'Preparando as diferenças para a revisão...')
+        return {"report": dataframe_rows(report), "newRows": new_rows, "fingerprint": session_fingerprint(first, second, data)}
 
     if action == "export-differences":
+        report_progress(data, 'Montando o relatório de diferenças...')
         frame = report_frame(data["report"])
         content = export_frame(frame, data.get("templatePath"))
         return {"content": base64.b64encode(content).decode("ascii")}
 
     if action == "export-choices":
+        report_progress(data, 'Montando o relatório de escolhas...')
         frame = report_frame(data["report"])
         if frame["Decisão"].eq("Pendente").any():
             raise ValueError("Resolva todas as diferenças antes de exportar as escolhas.")
@@ -136,8 +184,8 @@ def execute(action, data):
         return {"content": base64.b64encode(content).decode("ascii")}
 
     if action == "generate":
-        first = Path(data["file1"]).read_bytes()
-        second = Path(data["file2"]).read_bytes()
+        first, second = checked_session_files(data)
+        report_progress(data, 'Aplicando decisões e preparando a cópia do Excel...')
         report = report_frame(data["report"])
         decisions = report.copy()
         content, changes, rows = core.gerar_arquivo_corrigido(
@@ -148,6 +196,7 @@ def execute(action, data):
             alinhar_primeira_coluna=bool(data.get("alignByFirstColumn", False)),
             validar_chaves_unicas=bool(data.get("validateUniqueFirstColumn", True)),
         )
+        report_progress(data, 'Preparando o arquivo para salvar...')
         return {"content": base64.b64encode(content).decode("ascii"), "changes": changes, "rows": rows}
 
     raise ValueError(f"Operação desconhecida: {action}")

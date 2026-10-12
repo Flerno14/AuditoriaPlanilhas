@@ -1,0 +1,3 @@
+.session-bar { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+.session-bar span { flex: 1; color: #556b62; }
+.session-bar button:focus-visible { outline: 3px solid #193336; outline-offset: 3px; }

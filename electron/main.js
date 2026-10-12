@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { readSession, writeSession } = require('./session-store');
 
 let python;
 let pythonLastError;
@@ -33,6 +34,13 @@ function rejectPending(error) {
   pending.clear();
 }
 
+function stopPython(message) {
+  const child = python;
+  python = null;
+  rejectPending(new Error(message));
+  if (child) child.kill();
+}
+
 function summarizePythonFailure(stderr) {
   const cpuFailure = stderr.match(/NumPy was built with baseline optimizations:\s*\(([^)]+)\).*?doesn't support:\s*\(([^)]+)\)/s);
   if (cpuFailure) {
@@ -59,6 +67,7 @@ function startPython() {
   python = child;
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk) => {
+    if (python !== child) return;
     inputBuffer += chunk;
     const lines = inputBuffer.split('\n');
     inputBuffer = lines.pop();
@@ -68,6 +77,7 @@ function startPython() {
         const message = JSON.parse(line);
         const waiter = pending.get(message.id);
         if (!waiter) continue;
+        if (message.progress) { waiter.progress?.(message.progress); continue; }
         pending.delete(message.id);
         message.ok ? waiter.resolve(message.result) : waiter.reject(new Error(message.error));
       } catch (error) {
@@ -77,16 +87,19 @@ function startPython() {
   });
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk) => {
+    if (python !== child) return;
     pythonStderr = (pythonStderr + chunk).slice(-8000);
     logPython(`[stderr] ${chunk.trimEnd()}`);
   });
   child.on('error', (error) => {
+    if (python !== child) return;
     pythonLastError = `Falha ao iniciar a lógica de planilhas: ${error.message}`;
     logPython(pythonLastError);
     rejectPending(new Error(pythonLastError));
     if (python === child) python = null;
   });
   child.on('exit', (code, signal) => {
+    if (python !== child) return;
     const detail = summarizePythonFailure(pythonStderr);
     pythonLastError = `O processo da lógica de planilhas foi encerrado (código ${code}${signal ? `, sinal ${signal}` : ''}).${detail ? ` ${detail}` : ''}`;
     logPython(pythonLastError);
@@ -95,22 +108,21 @@ function startPython() {
   });
 }
 
-function callPython(action, payload = {}) {
+function callPython(action, payload = {}, progress) {
   if (!python) startPython();
   const child = python;
   if (!child) return Promise.reject(new Error(pythonLastError || 'Não foi possível iniciar a lógica de planilhas.'));
   const id = nextId++;
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      pending.delete(id);
-      const detail = summarizePythonFailure(pythonStderr);
-      reject(new Error(`A lógica de planilhas não respondeu em 60 segundos.${detail ? ` ${detail}` : ''}`));
-    }, 60000);
+      stopPython('O processamento excedeu 10 minutos e foi interrompido. Tente trabalhar com uma planilha menor.');
+    }, 600000);
     pending.set(id, {
+      progress,
       resolve: (result) => { clearTimeout(timeout); resolve(result); },
       reject: (error) => { clearTimeout(timeout); reject(error); }
     });
-    child.stdin.write(`${JSON.stringify({ id, action, ...payload })}\n`, (error) => {
+    child.stdin.write(`${JSON.stringify({ ...payload, id, action, reportProgress: true })}\n`, (error) => {
       if (error) {
         clearTimeout(timeout);
         pending.delete(id);
@@ -142,6 +154,25 @@ ipcMain.handle('files:open-template', async () => {
   return result.canceled || !result.filePaths.length ? null : { path: result.filePaths[0], name: path.basename(result.filePaths[0]) };
 });
 ipcMain.handle('settings:get', () => readSettings());
+ipcMain.handle('session:get', () => readSession(path.join(app.getPath('userData'), 'audit-session.json')));
+ipcMain.handle('session:save', (_event, session) => writeSession(path.join(app.getPath('userData'), 'audit-session.json'), session));
+ipcMain.handle('session:clear', () => {
+  fs.rmSync(path.join(app.getPath('userData'), 'audit-session.json'), { force: true });
+  fs.rmSync(path.join(app.getPath('userData'), 'audit-session.json.tmp'), { force: true });
+});
+ipcMain.handle('review:confirm-discard', async (event, action) => {
+  const result = await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender), {
+    type: 'warning',
+    title: 'Descartar decisões da revisão?',
+    message: action === 'clear' ? 'Esta ação remove as duas seleções e apaga a sessão de revisão salva.' : 'Esta ação refaz a comparação e descarta as decisões da revisão atual.',
+    detail: action === 'clear' ? 'Os arquivos Excel não serão excluídos. Deseja continuar?' : 'As diferenças voltarão a ficar pendentes. Deseja continuar?',
+    buttons: ['Cancelar', 'Descartar decisões e continuar'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+  return result.response === 1;
+});
 ipcMain.handle('settings:save', (_event, settings) => {
   const current = readSettings();
   const color = /^#[0-9a-f]{6}$/i.test(settings?.changeColor) ? settings.changeColor.toUpperCase() : current.changeColor;
@@ -160,7 +191,10 @@ ipcMain.handle('files:save', async (_event, { name, content }) => {
   fs.writeFileSync(result.filePath, Buffer.from(content, 'base64'));
   return result.filePath;
 });
-ipcMain.handle('python:call', (_event, action, payload) => callPython(action, payload));
+ipcMain.handle('python:call', (event, action, payload) => callPython(action, payload, (stage) => {
+  if (!event.sender.isDestroyed()) event.sender.send('python:progress', stage);
+}));
+ipcMain.handle('python:cancel', () => { stopPython('Operação cancelada.'); });
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);

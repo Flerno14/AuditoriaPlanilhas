@@ -48,22 +48,42 @@ def obter_abas(arquivo_bytes: bytes) -> list[str]:
 def carregar_excel(
     arquivo_bytes: bytes,
     sheet_name: str,
+    nome_arquivo: str = "arquivo",
 ) -> pd.DataFrame:
-    """Lê uma aba do Excel utilizando pandas."""
+    """Lê uma aba e valida os cabeçalhos originais antes de normalizá-los."""
 
-    return pd.read_excel(
-        BytesIO(arquivo_bytes),
-        sheet_name=sheet_name,
-        engine="openpyxl",
-        # Preserve valores textuais como "N/A" e "NA"; o padrão do pandas
-        # os converte em ausentes. Células realmente vazias continuam sendo
-        # normalizadas em normalizar_dataframe.
-        keep_default_na=False,
-        # A planilha corrigida pode conter texto e números na mesma coluna.
-        # Preservar object evita a conversão de uma coluna mista para string
-        # via PyArrow ("Expected bytes, got a 'int' object").
-        dtype=object,
-    )
+    with pd.ExcelFile(BytesIO(arquivo_bytes), engine="openpyxl") as excel:
+        if sheet_name not in excel.sheet_names:
+            raise ValueError(f"A aba '{sheet_name}' não existe no {nome_arquivo}.")
+        # Preserve textos como NA/N/A e os tipos mistos de cada coluna.
+        frame = excel.parse(sheet_name, keep_default_na=False, dtype=object)
+        if not len(frame.columns):
+            raise ValueError(f"A aba '{sheet_name}' do {nome_arquivo} não possui cabeçalhos na primeira linha.")
+        # O pandas renomeia duplicatas e cabeçalhos vazios automaticamente.
+        # Leia também a primeira linha como dados para detectar esses casos.
+        raw = excel.parse(sheet_name, header=None, nrows=1, keep_default_na=False, dtype=object)
+        headers = raw.reindex(index=[0], columns=range(len(frame.columns))).iloc[0]
+        nomes = ["" if pd.isna(value) else str(value).strip() for value in headers]
+        # Uma área lateral sem cabeçalhos, separada por uma coluna vazia,
+        # pode conter anotações fora da tabela. Preserve-a no workbook, mas
+        # não a transforme em colunas de dados para comparação/novas linhas.
+        ultima_nomeada = max((index for index, name in enumerate(nomes) if name), default=-1)
+        inicio_lateral = ultima_nomeada + 1
+        if ultima_nomeada >= 0 and inicio_lateral < len(nomes):
+            separador = frame.iloc[:, inicio_lateral]
+            if all(pd.isna(value) or (isinstance(value, str) and not value.strip()) for value in separador):
+                frame = frame.iloc[:, :inicio_lateral].copy()
+                nomes = nomes[:inicio_lateral]
+        vazios = [str(index + 1) for index, name in enumerate(nomes) if not name]
+        duplicadas = list(dict.fromkeys(name for index, name in enumerate(nomes) if name and name in nomes[:index]))
+        problemas = []
+        if vazios:
+            problemas.append("Cabeçalhos vazios nas colunas: " + ", ".join(vazios) + ".")
+        if duplicadas:
+            problemas.append("Cabeçalhos duplicados: " + ", ".join(duplicadas) + ".")
+        if problemas:
+            raise ValueError(f"Estrutura inválida no {nome_arquivo}, aba '{sheet_name}'. " + " ".join(problemas) + " Corrija a primeira linha da planilha antes de comparar.")
+        return frame
 
 
 # ============================================================
@@ -106,8 +126,9 @@ def normalizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 def validar_colunas(
     df1: pd.DataFrame,
     df2: pd.DataFrame,
+    alinhar_primeira_coluna: bool = False,
 ) -> None:
-    """Garante que os nomes das colunas não sejam duplicados."""
+    """Valida a compatibilidade com a estrutura preservada do Arquivo 1."""
 
     duplicadas_1 = df1.columns[df1.columns.duplicated()].tolist()
     duplicadas_2 = df2.columns[df2.columns.duplicated()].tolist()
@@ -121,6 +142,27 @@ def validar_colunas(
         raise ValueError(
             "O Arquivo 2 possui colunas duplicadas: "
             + ", ".join(map(str, duplicadas_2))
+        )
+
+    if not len(df1.columns) or not len(df2.columns):
+        raise ValueError("Os dois arquivos devem possuir cabeçalhos na primeira linha.")
+    exclusivas_2 = [str(coluna) for coluna in df2.columns if coluna not in df1.columns]
+    exclusivas_1 = [str(coluna) for coluna in df1.columns if coluna not in df2.columns]
+    if exclusivas_2:
+        detalhes = "Colunas exclusivas do Arquivo 2: " + ", ".join(exclusivas_2) + "."
+        if exclusivas_1:
+            detalhes += " Colunas exclusivas do Arquivo 1: " + ", ".join(exclusivas_1) + "."
+        raise ValueError(
+            "Estruturas incompatíveis. " + detalhes
+            + " O arquivo gerado preserva as colunas do Arquivo 1. "
+            "Ajuste os cabeçalhos correspondentes ou remova as colunas extras do Arquivo 2 antes de comparar."
+        )
+    if alinhar_primeira_coluna and df1.columns[0] != df2.columns[0]:
+        raise ValueError(
+            "Alinhamento incompatível: a primeira coluna é "
+            f"'{df1.columns[0]}' no Arquivo 1 e '{df2.columns[0]}' no Arquivo 2. "
+            "Coloque a mesma coluna de chave na primeira posição dos dois arquivos "
+            "ou desative o alinhamento pela primeira coluna para comparar por posição das linhas."
         )
 
 
@@ -156,6 +198,23 @@ def _mapear_chaves_primeira_coluna(
     return mapa
 
 
+def obter_indices_linhas_novas(df1, df2, alinhar_primeira_coluna=False, validar_chaves_unicas=True):
+    """Índices do Arquivo 2 que serão acrescentados, em ordem de ocorrência."""
+    if not alinhar_primeira_coluna:
+        return list(range(len(df1), len(df2)))
+    chaves_1 = _mapear_chaves_primeira_coluna(df1, "Arquivo 1", validar_chaves_unicas)
+    _mapear_chaves_primeira_coluna(df2, "Arquivo 2", validar_chaves_unicas)
+    ocorrencias = {}
+    novos = []
+    for indice, valor in enumerate(df2.iloc[:, 0]):
+        chave = _chave_primeira_coluna(valor)
+        ocorrencia = ocorrencias.get(chave, 0)
+        ocorrencias[chave] = ocorrencia + 1
+        if ocorrencia >= len(chaves_1.get(chave, [])):
+            novos.append(indice)
+    return novos
+
+
 # ============================================================
 # COMPARAÇÃO
 # ============================================================
@@ -186,14 +245,14 @@ def comparar_dataframes(
     """
 
     df1 = normalizar_dataframe(
-        carregar_excel(arquivo_1_bytes, sheet_name)
+        carregar_excel(arquivo_1_bytes, sheet_name, "Arquivo 1")
     )
 
     df2 = normalizar_dataframe(
-        carregar_excel(arquivo_2_bytes, sheet_name)
+        carregar_excel(arquivo_2_bytes, sheet_name, "Arquivo 2")
     )
 
-    validar_colunas(df1, df2)
+    validar_colunas(df1, df2, alinhar_primeira_coluna)
 
     if alinhar_primeira_coluna:
         chaves_1 = _mapear_chaves_primeira_coluna(df1, "Arquivo 1", validar_chaves_unicas)
@@ -419,12 +478,14 @@ def gerar_arquivo_corrigido(
         # DataFrames normalizados usados para descobrir o tamanho real
         # das áreas de dados e os valores das linhas novas.
         df_original = normalizar_dataframe(
-            carregar_excel(arquivo_1_bytes, sheet_name)
+            carregar_excel(arquivo_1_bytes, sheet_name, "Arquivo 1")
         )
 
         df_modificado = normalizar_dataframe(
-            carregar_excel(arquivo_2_bytes, sheet_name)
+            carregar_excel(arquivo_2_bytes, sheet_name, "Arquivo 2")
         )
+
+        validar_colunas(df_original, df_modificado, alinhar_primeira_coluna)
 
         mapa_colunas = {
             str(nome): indice + 1
@@ -495,23 +556,10 @@ def gerar_arquivo_corrigido(
         # --------------------------------------------------------
 
         quantidade_linhas_arquivo_1 = len(df_original)
-        quantidade_linhas_arquivo_2 = len(df_modificado)
-
-        if alinhar_primeira_coluna:
-            chaves_1 = _mapear_chaves_primeira_coluna(df_original, "Arquivo 1", validar_chaves_unicas)
-            _mapear_chaves_primeira_coluna(df_modificado, "Arquivo 2", validar_chaves_unicas)
-            ocorrencias_2 = {}
-            indices_linhas_novas = []
-            for indice, valor in enumerate(df_modificado.iloc[:, 0]):
-                chave = _chave_primeira_coluna(valor)
-                ocorrencia = ocorrencias_2.get(chave, 0)
-                ocorrencias_2[chave] = ocorrencia + 1
-                if ocorrencia >= len(chaves_1.get(chave, [])):
-                    indices_linhas_novas.append(indice)
-            quantidade_linhas_novas = len(indices_linhas_novas)
-        else:
-            quantidade_linhas_novas = max(0, quantidade_linhas_arquivo_2 - quantidade_linhas_arquivo_1)
-            indices_linhas_novas = list(range(quantidade_linhas_arquivo_1, quantidade_linhas_arquivo_2))
+        indices_linhas_novas = obter_indices_linhas_novas(
+            df_original, df_modificado, alinhar_primeira_coluna, validar_chaves_unicas
+        )
+        quantidade_linhas_novas = len(indices_linhas_novas)
 
         if incluir_linhas_novas and quantidade_linhas_novas > 0:
 

@@ -7,6 +7,7 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node scripts/test.js",
     "build:python": "pyinstaller --clean --noconfirm --onefile --name bridge --distpath dist/python --workpath build/pyinstaller --paths . python/bridge.py",
     "build:electron": "electron-builder --win --dir",
     "build:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
