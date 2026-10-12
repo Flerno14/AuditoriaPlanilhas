@@ -18,7 +18,7 @@ let filterCache = null;
 let searchCache = new WeakMap();
 let searchTimer;
 function reportPageSize() { return [50, 100, 250].includes(Number($('page-size').value)) ? Number($('page-size').value) : 50; }
-const settings = { templates: { differences: null, choices: null }, changeColor: '#FFA500', alignByFirstColumn: false, validateUniqueFirstColumn: true };
+const settings = { templates: { differences: null, choices: null }, changeColor: '#FFA500', alignByFirstColumn: false, validateUniqueFirstColumn: true, replaceFilenameDates: false };
 let settingsDraft = null;
 const loadingTasks = new Map();
 let nextLoadingTaskId = 0;
@@ -633,8 +633,24 @@ $('preview-previous').addEventListener('click', () => { previewPage--; renderPre
 $('preview-next').addEventListener('click', () => { previewPage++; renderPreview(); });
 $('preview-new-rows').addEventListener('click', () => previewNewRows());
 
+function datedOutputName(name, today = new Date()) {
+  const date = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+  const extension = name.match(/\.[^.]+$/)?.[0] || '.xlsx';
+  let base = name.replace(/\.[^.]+$/, '');
+  let replaced = false;
+  if (settings.replaceFilenameDates) {
+    base = base.replace(/(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)/g, (match, year, month, day) => {
+      const candidate = new Date(Number(year), Number(month) - 1, Number(day));
+      if (candidate.getFullYear() !== Number(year) || candidate.getMonth() !== Number(month) - 1 || candidate.getDate() !== Number(day)) return match;
+      replaced = true;
+      return date;
+    });
+  }
+  return `${base}${replaced ? '' : `_${date}`}${extension}`;
+}
+
 async function saveContent(name, content, message) {
-  const saved = await window.auditoria.saveFile(name, content);
+  const saved = await window.auditoria.saveFile(datedOutputName(name), content);
   if (saved) { notify(`${message}: ${saved}`); return saved; }
   return null;
 }
@@ -698,6 +714,7 @@ function renderSettings(values = settingsDraft || settings) {
   $('change-color-value').textContent = values.changeColor;
   $('align-first-column').checked = Boolean(values.alignByFirstColumn);
   $('validate-unique-first-column').checked = values.validateUniqueFirstColumn !== false;
+  $('replace-filename-dates').checked = values.replaceFilenameDates === true;
   $('validate-unique-first-column').disabled = !values.alignByFirstColumn;
 }
 $('open-settings').addEventListener('click', () => {
@@ -716,6 +733,7 @@ $('align-first-column').addEventListener('change', (event) => {
   $('validate-unique-first-column').disabled = !event.target.checked;
 });
 $('validate-unique-first-column').addEventListener('change', (event) => { settingsDraft.validateUniqueFirstColumn = event.target.checked; });
+$('replace-filename-dates').addEventListener('change', (event) => { settingsDraft.replaceFilenameDates = event.target.checked; });
 document.querySelectorAll('[data-template]').forEach((button) => button.addEventListener('click', async () => {
   try { const draft = settingsDraft; const file = await window.auditoria.openTemplate(); if (file && draft === settingsDraft) { draft.templates[button.dataset.template] = file.path; renderSettings(); } }
   catch (error) { showError(error); }
@@ -726,7 +744,7 @@ $('save-settings').addEventListener('click', async () => {
   if (button.disabled) return;
   button.disabled = true;
   try {
-    const next = { templates: { ...settingsDraft.templates }, changeColor: $('change-color').value, alignByFirstColumn: $('align-first-column').checked, validateUniqueFirstColumn: $('validate-unique-first-column').checked };
+    const next = { templates: { ...settingsDraft.templates }, changeColor: $('change-color').value, alignByFirstColumn: $('align-first-column').checked, validateUniqueFirstColumn: $('validate-unique-first-column').checked, replaceFilenameDates: $('replace-filename-dates').checked };
     const shouldCompare = state.file1 && state.file2 && comparisonRulesChanged(settings, next);
     if (shouldCompare && !await confirmDiscardReview()) return;
     Object.assign(settings, await window.auditoria.saveSettings(next));

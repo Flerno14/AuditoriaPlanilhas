@@ -24,7 +24,7 @@ $env:PYTHON = "C:\Program Files\Python314\python.exe"
 npm start
 ```
 
-Selecione o arquivo original e o modificado, escolha uma aba comum e clique em **Comparar planilhas**. Clique na decisão de uma linha para escolher entre manter o Arquivo 1, usar o Arquivo 2 ou deixar pendente. As listas de aba, filtros, aplicação em massa e paginação usam o mesmo estilo de menu da decisão. **Aplicar** define a mesma escolha para todas as diferenças ou somente os itens filtrados, conforme **Aplicar em**.
+Selecione o arquivo original e o modificado, escolha uma aba comum e clique em **Comparar planilhas**. Clique na decisão de uma linha para escolher entre manter o Arquivo 1, usar o Arquivo 2 ou deixar pendente. As listas de aba, filtros, aplicação em massa e paginação usam o mesmo estilo de menu da decisão. **Aplicar** define a mesma escolha para todas as diferenças ou somente os itens filtrados, conforme **Aplicar em**. A decisão em massa também oferece **Pendente** para reabrir a revisão dos itens no escopo escolhido, com salvamento automático e suporte a **Desfazer**.
 
 Para escrever uma terceira alternativa, selecione **Valor personalizado** na decisão da linha. O popup exibe o valor do Arquivo 1, o do Arquivo 2 e o campo editável. **Usar este valor** salva o texto e o mostra centralizado sobre as duas colunas; escolher outra decisão restaura os valores originais. Selecione novamente a opção para editar. **Cancelar** ou Escape preserva a escolha anterior. O valor é gravado como texto literal (preservando zeros à esquerda e quebras de linha); vazio limpa a célula. Ele é usado nos dois arquivos finais e nas exportações, e é preservado na sessão salva.
 
@@ -37,6 +37,10 @@ Durante operações Python, a tela de processamento informa a etapa atual e perm
 **Ver linhas novas** abre uma prévia paginada (50 linhas por página), com a linha de origem no Arquivo 2 e os valores nas colunas do Arquivo 1. A prévia também aparece antes de gerar um arquivo corrigido com linhas novas: escolha **Gerar com estas linhas** ou volte à revisão. Arquivos de origem alterados bloqueiam a prévia. O resumo distingue células a alterar de linhas novas disponíveis; gerar um arquivo apenas com marcação de alterações não acrescenta essas linhas.
 
 O aplicativo exporta o relatório de diferenças, as escolhas aplicadas, uma cópia do Arquivo 1 com as alterações escolhidas e o arquivo corrigido com as linhas novas do Arquivo 2. Arquivos `.xlsm` mantêm as macros ao gerar a cópia corrigida.
+
+Todos os arquivos gerados recebem a data local do dia no nome sugerido, no formato `_AAAAMMDD`, antes da extensão. O nome anterior é preservado, incluindo datas antigas e outros sufixos. Por exemplo, uma geração em 12/10/2026 pode resultar em `All Translations of Defense_IA_20260817_corrigido_20261012.xlsx` ou `diferencas_entre_arquivos_20261012.xlsx`. Você pode editar o nome no diálogo de salvamento.
+
+Em **Configurações → Nomes dos arquivos gerados**, ative **Substituir datas existentes no nome pela data atual** para atualizar as datas válidas em `AAAAMMDD`, em qualquer posição do nome, sem acrescentar outra data. Por exemplo, `Planilha_20260817_corrigido.xlsx` passa a `Planilha_20261012_corrigido.xlsx` em 12/10/2026. Se houver várias datas, todas são atualizadas nas posições existentes; se não houver nenhuma, a data é acrescentada ao final. A opção vale para todos os arquivos gerados, fica salva neste computador e não altera as decisões da revisão.
 
 **Limpar arquivos** remove as duas seleções, as decisões e a sessão salva, sem excluir as planilhas Excel. **Inverter arquivos 1 e 2** troca o original pelo modificado e refaz a comparação na mesma aba. Ambas as ações pedem confirmação se houver decisões tomadas. A inversão exige os dois arquivos selecionados e aplica as validações novamente, pois o novo Arquivo 1 passa a definir a estrutura da saída.
 

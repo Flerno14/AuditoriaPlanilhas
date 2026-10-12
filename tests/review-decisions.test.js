@@ -141,6 +141,37 @@ test('custom popup saves, edits, merges cells, filters and undoes without losing
   assert.equal(r.read("state.report[0]['Valor personalizado']"), 'João');
 });
 
+test('filename dates are replaced only after saving the preference, preserving review', async () => {
+  const r = await createReview();
+  const filename = (name) => r.read(`datedOutputName(${JSON.stringify(name)}, new Date(2026, 9, 12))`);
+  assert.equal(filename('Planilha_20260817_corrigido.xlsm'), 'Planilha_20260817_corrigido_20261012.xlsm');
+  r.element('open-settings').emit('click');
+  r.element('replace-filename-dates').checked = true;
+  r.element('replace-filename-dates').emit('change');
+  assert.equal(r.read('settings.replaceFilenameDates'), false);
+  r.element('cancel-settings').emit('click');
+  assert.equal(r.read('settings.replaceFilenameDates'), false);
+  r.element('open-settings').emit('click');
+  r.element('replace-filename-dates').checked = true;
+  r.controls.failSave = true;
+  await r.element('save-settings').emit('click');
+  assert.equal(r.read('settings.replaceFilenameDates'), false);
+  r.controls.failSave = false;
+  await r.element('save-settings').emit('click');
+  assert.equal(r.calls.saves.at(-1).replaceFilenameDates, true);
+  assert.equal(r.read('state.report'), r.originalReport);
+  assert.equal(r.calls.comparisons.length, 0);
+  assert.equal(r.calls.confirmations, 0);
+  assert.equal(filename('Planilha_20260817_corrigido.xlsm'), 'Planilha_20261012_corrigido.xlsm');
+  assert.equal(filename('Planilha_20260817_corrigido_20260911.xlsx'), 'Planilha_20261012_corrigido_20261012.xlsx');
+  assert.equal(filename('diferencas_entre_arquivos.xlsx'), 'diferencas_entre_arquivos_20261012.xlsx');
+  assert.equal(filename('Planilha_20240229.xlsx'), 'Planilha_20261012.xlsx');
+  assert.equal(filename('Planilha_20260229.xlsx'), 'Planilha_20260229_20261012.xlsx');
+  assert.equal(filename('Planilha_1202608179.xlsx'), 'Planilha_1202608179_20261012.xlsx');
+  r.element('open-settings').emit('click');
+  assert.equal(r.element('replace-filename-dates').checked, true);
+});
+
 test('saving color and template preferences preserves decisions without comparing or prompting', async () => {
   const r = await createReview();
   r.element('open-settings').emit('click');
