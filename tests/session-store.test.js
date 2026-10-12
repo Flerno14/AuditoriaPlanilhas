@@ -24,6 +24,14 @@ test('session survives reload with typed cell values, rules and decisions', () =
     writeSession(target, session);
     assert.deepEqual(readSession(target).rules, session.rules);
     assert.equal(readSession(target).report[0]['Decisão'], 'Manter Arquivo 1');
+    session.report[0]['Decisão'] = 'Valor personalizado';
+    assert.throws(() => writeSession(target, session), /decisões inválidas/);
+    session.report[0]['Valor personalizado'] = '001\nTexto';
+    writeSession(target, session);
+    assert.deepEqual(readSession(target).report, session.report);
+    session.report[0]['Valor personalizado'] = '';
+    writeSession(target, session);
+    assert.equal(readSession(target).report[0]['Valor personalizado'], '');
     assert.equal(fs.existsSync(`${target}.tmp`), false);
     assert.throws(() => writeSession(target, { ...session, version: 99 }), /incompatível/);
     assert.equal(readSession(target).version, 1);

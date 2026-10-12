@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 function validateSession(session) {
-  const choices = ['Pendente', 'Manter Arquivo 1', 'Usar Arquivo 2'];
+  const choices = ['Pendente', 'Manter Arquivo 1', 'Usar Arquivo 2', 'Valor personalizado'];
   if (session?.version !== 1 || !/^[a-f0-9]{64}$/.test(session.fingerprint || '')
       || typeof session.sheet !== 'string' || !session.sheet
       || typeof session.rules?.alignByFirstColumn !== 'boolean'
@@ -19,7 +19,8 @@ function validateSession(session) {
     if (!row || !Number.isInteger(row['Índice/Linha']) || row['Índice/Linha'] < 2
         || typeof row['Nome da Coluna'] !== 'string'
         || !Object.hasOwn(row, 'Valor no Arquivo 1') || !Object.hasOwn(row, 'Valor no Arquivo 2')
-        || !choices.includes(row['Decisão'])) throw new Error('A sessão salva contém decisões inválidas.');
+        || !choices.includes(row['Decisão'])
+        || (row['Decisão'] === 'Valor personalizado' && typeof row['Valor personalizado'] !== 'string')) throw new Error('A sessão salva contém decisões inválidas.');
   }
   return session;
 }

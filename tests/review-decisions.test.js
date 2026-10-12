@@ -106,6 +106,41 @@ async function createReview({ aligned = false, decision = 'Usar Arquivo 2' } = {
   return { element, calls, controls, read, originalReport, windowListeners };
 }
 
+test('custom popup saves, edits, merges cells, filters and undoes without losing originals', async () => {
+  const r = await createReview();
+  r.read(`state.report[0]['Valor no Arquivo 1'] = 'Ana'; state.report[0]['Valor no Arquivo 2'] = 'Bia'; openCustomDecision(0)`);
+  assert.equal(r.element('custom-file1').value, 'Ana');
+  assert.equal(r.element('custom-file2').value, 'Bia');
+  r.element('custom-value').value = 'João';
+  r.element('custom-cancel').emit('click');
+  assert.equal(r.read("state.report[0]['Decisão']"), 'Usar Arquivo 2');
+  r.read('openCustomDecision(0)');
+  r.element('custom-value').value = 'João';
+  r.element('custom-form').emit('submit');
+  await r.read('sessionWrites');
+  assert.equal(r.calls.sessions.at(-1).report[0]['Valor personalizado'], 'João');
+  r.read('actualRenderRows()');
+  assert.equal(r.element('rows').children[0].cells.length, 4);
+  assert.equal(r.element('rows').children[0].cells[2].colSpan, 2);
+  assert.equal(r.element('rows').children[0].cells[2].textContent, 'João');
+  r.element('search').value = 'joao';
+  assert.equal(r.read('filteredReportIndices().length'), 1);
+  r.read('openCustomDecision(0)');
+  assert.equal(r.element('custom-value').value, 'João');
+  r.element('custom-value').value = '';
+  r.element('custom-form').emit('submit');
+  assert.equal(r.read('filteredReportIndices().length'), 0);
+  r.read('undoDecision()');
+  assert.equal(r.read("state.report[0]['Valor personalizado']"), 'João');
+  r.element('search').value = '';
+  r.read("changeDecisions([0], 'Manter Arquivo 1'); actualRenderRows()");
+  assert.equal(r.element('rows').children[0].cells.length, 5);
+  assert.equal(r.element('rows').children[0].cells[2].textContent, 'Ana');
+  assert.equal(r.element('rows').children[0].cells[3].textContent, 'Bia');
+  r.read('undoDecision()');
+  assert.equal(r.read("state.report[0]['Valor personalizado']"), 'João');
+});
+
 test('saving color and template preferences preserves decisions without comparing or prompting', async () => {
   const r = await createReview();
   r.element('open-settings').emit('click');
@@ -426,7 +461,12 @@ test('o menu de decisão mantém a escolha no relatório e permite desfazer', as
   assert.equal(button.className, 'decision');
   assert.equal(button.textContent, 'Pendente');
   button.emit('click');
-  assert.deepEqual(r.calls.menu.children.map((item) => item.textContent), ['✓  Pendente', 'Manter Arquivo 1', 'Usar Arquivo 2']);
+  assert.deepEqual(r.calls.menu.children.map((item) => item.textContent), ['✓  Pendente', 'Manter Arquivo 1', 'Usar Arquivo 2', 'Valor personalizado']);
+  r.calls.menu.children[3].emit('click');
+  assert.equal(r.element('custom-dialog').open, true);
+  assert.equal(r.read("state.report[0]['Decisão']"), 'Pendente');
+  r.element('custom-cancel').emit('click');
+  button.emit('click');
   r.calls.menu.children[2].emit('click');
   assert.equal(r.read("state.report[0]['Decisão']"), 'Usar Arquivo 2');
   assert.equal(r.element('undo-decision').disabled, false);

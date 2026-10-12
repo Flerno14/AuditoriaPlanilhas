@@ -511,8 +511,11 @@ def gerar_arquivo_corrigido(
         for _, decisao in decisoes.iterrows():
             escolha = decisao["Decisão"]
 
-            if escolha != "Usar Arquivo 2":
+            if escolha not in ("Usar Arquivo 2", "Valor personalizado"):
                 continue
+
+            if escolha == "Valor personalizado" and not isinstance(decisao.get("Valor personalizado"), str):
+                raise ValueError("A decisão personalizada exige um valor de texto, que pode estar vazio.")
 
             linha_excel = int(decisao["Índice/Linha"])
             nome_coluna = str(decisao["Nome da Coluna"])
@@ -533,7 +536,7 @@ def gerar_arquivo_corrigido(
                 )
 
             novo_valor = normalizar_valor_excel(
-                valores_arquivo_2[chave]
+                decisao["Valor personalizado"] if escolha == "Valor personalizado" else valores_arquivo_2[chave]
             )
 
             celula = worksheet.cell(
@@ -542,6 +545,8 @@ def gerar_arquivo_corrigido(
             )
             valor_anterior = normalizar_valor_excel(celula.value)
             celula.value = novo_valor
+            if escolha == "Valor personalizado" and isinstance(novo_valor, str):
+                celula.data_type = "s"
 
             if marcar_alteracoes_laranja and valor_anterior != novo_valor:
                 celula.fill = PatternFill(

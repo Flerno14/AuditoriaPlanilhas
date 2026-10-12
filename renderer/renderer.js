@@ -211,7 +211,9 @@ function filteredReportIndices() {
     if (query) {
       let cached = searchCache.get(record);
       if (!cached || cached.matchCase !== matchCase) {
-        cached = { matchCase, fields: columns.slice(0, 4).map((name) => searchValue(record[name])) };
+        const fields = record['Decisão'] === 'Valor personalizado'
+          ? [...columns.slice(0, 2), 'Valor personalizado'] : columns.slice(0, 4);
+        cached = { matchCase, fields: fields.map((name) => searchValue(record[name])) };
         searchCache.set(record, cached);
       }
       const choice = record['Decisão'];
@@ -239,14 +241,21 @@ function resetReviewTools() {
   $('filter-column').value = '';
 }
 
-function changeDecisions(indices, choice) {
+function changeDecisions(indices, choice, customValue) {
   if (!state.comparisonReady) return 0;
-  const changes = indices.filter((index) => state.report[index]['Decisão'] !== choice)
-    .map((index) => ({ index, previous: state.report[index]['Decisão'] }));
+  if (choice === 'Valor personalizado' && typeof customValue !== 'string') return 0;
+  const changes = indices.filter((index) => state.report[index]['Decisão'] !== choice
+    || (choice === 'Valor personalizado' && state.report[index]['Valor personalizado'] !== customValue))
+    .map((index) => ({ index, previous: state.report[index]['Decisão'], custom: state.report[index]['Valor personalizado'] }));
   if (!changes.length) return 0;
   undoHistory.push(changes);
   if (undoHistory.length > 100) undoHistory.shift();
-  changes.forEach(({ index }) => { state.report[index]['Decisão'] = choice; });
+  changes.forEach(({ index }) => {
+    state.report[index]['Decisão'] = choice;
+    if (choice === 'Valor personalizado') state.report[index]['Valor personalizado'] = customValue;
+    else delete state.report[index]['Valor personalizado'];
+    searchCache.delete(state.report[index]);
+  });
   reportRevision++;
   $('undo-decision').disabled = false;
   renderRows(); updateSummary(); saveReview().catch(() => {});
@@ -256,7 +265,12 @@ function changeDecisions(indices, choice) {
 function undoDecision() {
   const changes = undoHistory.pop();
   if (!changes || !state.comparisonReady) return;
-  changes.forEach(({ index, previous }) => { state.report[index]['Decisão'] = previous; });
+  changes.forEach(({ index, previous, custom }) => {
+    state.report[index]['Decisão'] = previous;
+    if (custom !== undefined) state.report[index]['Valor personalizado'] = custom;
+    else delete state.report[index]['Valor personalizado'];
+    searchCache.delete(state.report[index]);
+  });
   reportRevision++;
   $('undo-decision').disabled = !undoHistory.length;
   renderRows(); updateSummary(); saveReview().catch(() => {});
@@ -273,6 +287,29 @@ function nextPending() {
   button?.scrollIntoView({ block: 'center' });
   button?.focus({ preventScroll: true });
 }
+
+let customDecisionIndex = null;
+function openCustomDecision(index) {
+  if (!state.comparisonReady) return;
+  const record = state.report[index];
+  customDecisionIndex = index;
+  $('custom-context').textContent = `Linha ${display(record['Índice/Linha'])} · Coluna ${display(record['Nome da Coluna'])}`;
+  $('custom-file1').value = display(record['Valor no Arquivo 1']);
+  $('custom-file2').value = display(record['Valor no Arquivo 2']);
+  $('custom-value').value = record['Valor personalizado'] ?? '';
+  $('custom-dialog').showModal();
+  $('custom-value').focus();
+}
+$('custom-cancel').addEventListener('click', () => $('custom-dialog').close());
+$('custom-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (customDecisionIndex !== null) changeDecisions([customDecisionIndex], 'Valor personalizado', $('custom-value').value);
+  $('custom-dialog').close();
+});
+$('custom-dialog').addEventListener('close', () => {
+  document.querySelector(`.decision[data-index="${customDecisionIndex}"]`)?.focus({ preventScroll: true });
+  customDecisionIndex = null;
+});
 
 async function selectFile(slot) {
   try {
@@ -411,7 +448,15 @@ function renderRows() {
     const record = state.report[index];
     const row = body.insertRow();
     columns.slice(0, 4).forEach((key, columnIndex) => {
+      if (record['Decisão'] === 'Valor personalizado' && columnIndex === 3) return;
       const cell = row.insertCell();
+      if (record['Decisão'] === 'Valor personalizado' && columnIndex === 2) {
+        cell.colSpan = 2;
+        cell.className = 'custom-value-cell';
+        cell.textContent = record['Valor personalizado'] || '(vazio)';
+        cell.title = record['Valor personalizado'];
+        return;
+      }
       const value = record[key];
       const other = columnIndex === 2 ? record[columns[3]] : columnIndex === 3 ? record[columns[2]] : undefined;
       const text = columnIndex >= 2 ? comparisonDisplay(value, other) : display(value);
@@ -423,8 +468,8 @@ function renderRows() {
     button.setAttribute('aria-label', `Decisão da linha ${display(record['Índice/Linha'])}, coluna ${display(record['Nome da Coluna'])}: ${record['Decisão']}`);
     button.setAttribute('aria-haspopup', 'listbox');
     button.addEventListener('click', () => openSelectionMenu(button,
-      ['Pendente', 'Manter Arquivo 1', 'Usar Arquivo 2'].map((value) => ({ value, label: value })),
-      state.report[index]['Decisão'], (value) => changeDecisions([index], value)));
+      ['Pendente', 'Manter Arquivo 1', 'Usar Arquivo 2', 'Valor personalizado'].map((value) => ({ value, label: value })),
+      state.report[index]['Decisão'], (value) => value === 'Valor personalizado' ? openCustomDecision(index) : changeDecisions([index], value)));
     choice.append(button);
   });
 }
@@ -525,7 +570,7 @@ function updateSummary(message) {
   let pending = 0, use2 = 0, keep1 = 0;
   for (const row of state.report) {
     if (row['Decisão'] === 'Pendente') pending++;
-    else if (row['Decisão'] === 'Usar Arquivo 2') use2++;
+    else if (row['Decisão'] === 'Usar Arquivo 2' || row['Decisão'] === 'Valor personalizado') use2++;
     else if (row['Decisão'] === 'Manter Arquivo 1') keep1++;
   }
   $('summary').textContent = `Células diferentes: ${state.report.length}   |   Pendentes: ${pending}   |   Células a alterar: ${use2}   |   Manter Arquivo 1: ${keep1}   |   Linhas novas disponíveis: ${state.newRows}`;

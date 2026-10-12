@@ -39,7 +39,11 @@ def report_frame(records):
         for key, value in restore_value(record).items():
             row[REPORT_HEADER_IDS.get(header_id(key), key)] = value
         normalized.append(row)
-    frame = pd.DataFrame(normalized, columns=REPORT_COLUMNS)
+    extra_columns = ["Valor personalizado"] if any("Valor personalizado" in row for row in normalized) else []
+    frame = pd.DataFrame(normalized, columns=REPORT_COLUMNS + extra_columns)
+    for row in normalized:
+        if row.get("Decisão") == "Valor personalizado" and not isinstance(row.get("Valor personalizado"), str):
+            raise ValueError("A decisão personalizada exige um valor de texto, que pode estar vazio.")
     if normalized:
         missing = [
             column
@@ -90,10 +94,20 @@ def dataframe_rows(frame):
     ]
 
 
-def export_frame(frame, template_path=None):
+def export_frame(frame, template_path=None, text_cells=()):
     if not template_path:
         output = BytesIO()
         frame.to_excel(output, index=False, sheet_name="Relatório")
+        if not text_cells:
+            return output.getvalue()
+        workbook = load_workbook(BytesIO(output.getvalue()))
+        for row, column in text_cells:
+            cell = workbook.worksheets[0].cell(row=row, column=column)
+            cell.value = frame.iloc[row - 2, column - 1]
+            cell.data_type = "s"
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
         return output.getvalue()
     template = Path(template_path)
     if not template.is_file():
@@ -104,8 +118,11 @@ def export_frame(frame, template_path=None):
         for column_index, value in enumerate(values, start=1):
             cell = sheet.cell(row=row_index, column=column_index)
             cell.value = restore_value(json_value(value))
+            if (row_index, column_index) in text_cells:
+                cell.data_type = "s"
     output = BytesIO()
     workbook.save(output)
+    workbook.close()
     return output.getvalue()
 
 
@@ -171,7 +188,8 @@ def execute(action, data):
     if action == "export-differences":
         report_progress(data, 'Montando o relatório de diferenças...')
         frame = report_frame(data["report"])
-        content = export_frame(frame, data.get("templatePath"))
+        text_cells = {(index + 2, 6) for index, row in frame.iterrows() if row["Decisão"] == "Valor personalizado"}
+        content = export_frame(frame, data.get("templatePath"), text_cells)
         return {"content": base64.b64encode(content).decode("ascii")}
 
     if action == "export-choices":
@@ -179,8 +197,9 @@ def execute(action, data):
         frame = report_frame(data["report"])
         if frame["Decisão"].eq("Pendente").any():
             raise ValueError("Resolva todas as diferenças antes de exportar as escolhas.")
-        selected = frame.apply(lambda row: row["Valor no Arquivo 2"] if row["Decisão"] == "Usar Arquivo 2" else row["Valor no Arquivo 1"], axis=1)
-        content = export_frame(pd.DataFrame({"Linha": frame["Índice/Linha"], "Coluna": frame["Nome da Coluna"], "Mudanças Aplicadas": selected}), data.get("templatePath"))
+        selected = frame.apply(lambda row: row["Valor personalizado"] if row["Decisão"] == "Valor personalizado" else row["Valor no Arquivo 2"] if row["Decisão"] == "Usar Arquivo 2" else row["Valor no Arquivo 1"], axis=1)
+        text_cells = {(index + 2, 3) for index, row in frame.iterrows() if row["Decisão"] == "Valor personalizado"}
+        content = export_frame(pd.DataFrame({"Linha": frame["Índice/Linha"], "Coluna": frame["Nome da Coluna"], "Mudanças Aplicadas": selected}), data.get("templatePath"), text_cells)
         return {"content": base64.b64encode(content).decode("ascii")}
 
     if action == "generate":

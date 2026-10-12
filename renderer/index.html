@@ -26,7 +26,7 @@
 
     <section class="card differences-card">
       <div class="table-toolbar"><div><strong>Revisão das diferenças</strong><span class="filter-count" id="filter-count" aria-live="polite">0 de 0</span></div><div class="review-actions"><button type="button" class="outline compact" id="next-pending">Próxima pendência</button><button type="button" class="outline compact" id="undo-decision" disabled>Desfazer</button><button type="button" class="outline compact" id="preview-new-rows">Ver linhas novas</button></div></div>
-      <div class="filter-toolbar"><label class="search-box" for="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Pesquisar diferenças" autocomplete="off"></label><button class="match-case" id="match-case" type="button" aria-pressed="false" aria-label="Diferenciar maiúsculas e minúsculas" title="Diferenciar maiúsculas e minúsculas">Aa</button><label for="filter-decision">Decisão:</label><select id="filter-decision"><option value="">Todas as decisões</option><option>Pendente</option><option>Manter Arquivo 1</option><option>Usar Arquivo 2</option></select><label for="filter-column">Coluna:</label><select id="filter-column"><option value="">Todas as colunas</option></select></div>
+      <div class="filter-toolbar"><label class="search-box" for="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Pesquisar diferenças" autocomplete="off"></label><button class="match-case" id="match-case" type="button" aria-pressed="false" aria-label="Diferenciar maiúsculas e minúsculas" title="Diferenciar maiúsculas e minúsculas">Aa</button><label for="filter-decision">Decisão:</label><select id="filter-decision"><option value="">Todas as decisões</option><option>Pendente</option><option>Manter Arquivo 1</option><option>Usar Arquivo 2</option><option>Valor personalizado</option></select><label for="filter-column">Coluna:</label><select id="filter-column"><option value="">Todas as colunas</option></select></div>
       <details class="tool-section"><summary>Decisão em massa</summary><div class="bulk-panel"><label for="bulk-choice">Definir decisão:</label><select id="bulk-choice"><option>Manter Arquivo 1</option><option>Usar Arquivo 2</option></select><label for="bulk-scope">Aplicar em:</label><select id="bulk-scope"><option value="all">Todas as diferenças</option><option value="filtered">Itens filtrados</option></select><button class="outline compact" id="apply">Aplicar</button></div></details>
       <div class="table-wrap"><table><thead><tr><th>Linha</th><th>Coluna</th><th>Arquivo 1 — Original</th><th>Arquivo 2 — Modificado</th><th><div class="decision-heading"><span>Decisão</span><div class="report-actions" role="group" aria-label="Exportar relatórios"><button type="button" class="report-icon" id="export-differences" aria-label="Exportar tabela de diferenças" title="Exportar tabela de diferenças"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="1.5"/><path d="M3 8h14M8 3v14M11 11h3M11 14h3M16 19l3 3 3-3M19 14v8"/></svg></button><button type="button" class="report-icon" id="export-choices" aria-label="Exportar tabela de escolhas" title="Exportar tabela de escolhas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h12v13H4zM7 9l1.5 1.5L11 8M7 14l1.5 1.5L11 13M16 19l3 3 3-3M19 14v8"/></svg></button></div></div></th></tr></thead><tbody id="rows"><tr class="empty"><td colspan="5">Selecione dois arquivos Excel para começar.</td></tr></tbody></table></div>
     <nav class="card pagination" aria-label="Páginas das diferenças"><label for="page-size">Itens por página:</label><select id="page-size"><option selected>50</option><option>100</option><option>250</option></select><span id="page-status" role="status">Página 1 de 1</span><button type="button" class="outline compact" id="page-previous" disabled>Anterior</button><button type="button" class="outline compact" id="page-next" disabled>Próxima</button></nav>
@@ -67,6 +67,20 @@
     <p id="preview-count" role="status"></p>
     <div class="preview-table"><table><thead id="preview-head"></thead><tbody id="preview-rows"></tbody></table></div>
     <div class="preview-actions"><button type="button" class="outline" id="preview-previous">Página anterior</button><button type="button" class="outline" id="preview-next">Próxima página</button><button type="button" class="outline" id="preview-close" autofocus>Voltar à revisão</button><button type="button" class="primary" id="preview-confirm" hidden>Gerar com estas linhas</button></div>
+  </dialog>
+  <dialog class="custom-dialog" id="custom-dialog" aria-labelledby="custom-title" aria-describedby="custom-context">
+    <form id="custom-form">
+      <h2 id="custom-title">Valor personalizado</h2>
+      <p id="custom-context"></p>
+      <label for="custom-file1">Valor no Arquivo 1</label>
+      <textarea id="custom-file1" rows="3" readonly></textarea>
+      <label for="custom-file2">Valor no Arquivo 2</label>
+      <textarea id="custom-file2" rows="3" readonly></textarea>
+      <label for="custom-value">Valor a usar nos arquivos finais</label>
+      <textarea id="custom-value" rows="4" aria-describedby="custom-help" autofocus></textarea>
+      <p id="custom-help">O valor será salvo como texto. Deixe vazio para limpar a célula. Para editar depois, selecione novamente “Valor personalizado”.</p>
+      <div class="preview-actions"><button type="button" class="outline" id="custom-cancel">Cancelar</button><button type="submit" class="primary">Usar este valor</button></div>
+    </form>
   </dialog>
   <div class="toast" id="toast" role="status"></div>
   <script src="renderer.js"></script>

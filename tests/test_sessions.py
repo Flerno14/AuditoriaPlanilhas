@@ -42,6 +42,36 @@ class SessionIdentityTests(unittest.TestCase):
         inactive_rule = dict(self.context, validateUniqueFirstColumn=False)
         self.assertTrue(self.request('validate-session', inactive_rule)['ok'])
 
+    def test_custom_values_generate_and_export_as_text(self):
+        import base64
+        from io import BytesIO
+        from openpyxl import load_workbook
+        data = self.generation()
+        row = data['report'][0]
+        row['Decisão'] = 'Valor personalizado'
+        invalid = self.request('generate', data)
+        self.assertFalse(invalid['ok'])
+        for value in ['001\nJoão', '=1+2', '']:
+            row['Valor personalizado'] = value
+            for marked in [False, True]:
+                response = self.request('generate', dict(data, markChanges=marked))
+                self.assertTrue(response['ok'], response)
+                book = load_workbook(BytesIO(base64.b64decode(response['result']['content'])))
+                self.assertEqual(book['Dados']['B2'].value, value or None)
+                self.assertNotEqual(book['Dados']['B2'].data_type, 'f')
+                self.assertEqual(book['Dados']['B2'].fill.patternType, 'solid' if marked else None)
+                self.assertEqual(response['result']['changes'], 1)
+                book.close()
+            for action, column in [('export-choices', 'C'), ('export-differences', 'F')]:
+                for template in [None, str(self.first)]:
+                    response = self.request(action, dict(report=data['report'], templatePath=template))
+                    self.assertTrue(response['ok'], response)
+                    book = load_workbook(BytesIO(base64.b64decode(response['result']['content'])))
+                    cell = book.worksheets[0][column + '2']
+                    self.assertEqual(cell.value, value or None)
+                    self.assertNotEqual(cell.data_type, 'f')
+                    book.close()
+
     def test_changed_source_blocks_resume_and_generation(self):
         self.second.write_bytes(spreadsheet(['ID', 'Nome'], [[1, 'Caio']]))
         for action, data in [('validate-session', self.context), ('generate', self.generation())]:
