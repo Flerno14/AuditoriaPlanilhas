@@ -1,6 +1,6 @@
 
 #define AppName "Auditoria de Planilhas"
-#define AppVersion "1.0.2"
+#define AppVersion "1.1.0"
 #define AppPublisher "Auditoria de Planilhas"
 #define AppExeName "Auditoria de Planilhas.exe"
 
