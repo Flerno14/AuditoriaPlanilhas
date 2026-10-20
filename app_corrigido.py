@@ -219,6 +219,41 @@ def obter_indices_linhas_novas(df1, df2, alinhar_primeira_coluna=False, validar_
 # COMPARAÇÃO
 # ============================================================
 
+def obter_detalhes_linha(
+    arquivo_1_bytes: bytes,
+    arquivo_2_bytes: bytes,
+    sheet_name: str,
+    linha: int,
+    alinhar_primeira_coluna: bool = False,
+    validar_chaves_unicas: bool = True,
+) -> dict:
+    """Retorna a linha original e sua correspondente, seguindo o pareamento da comparação."""
+    df1 = normalizar_dataframe(carregar_excel(arquivo_1_bytes, sheet_name, "Arquivo 1"))
+    df2 = normalizar_dataframe(carregar_excel(arquivo_2_bytes, sheet_name, "Arquivo 2"))
+    validar_colunas(df1, df2, alinhar_primeira_coluna)
+    if isinstance(linha, bool) or not isinstance(linha, int) or not 2 <= linha <= len(df1) + 1:
+        raise ValueError("Linha inválida para visualizar os detalhes.")
+    indice1 = linha - 2
+    indice2 = indice1
+    if alinhar_primeira_coluna:
+        chaves1 = _mapear_chaves_primeira_coluna(df1, "Arquivo 1", validar_chaves_unicas)
+        chaves2 = _mapear_chaves_primeira_coluna(df2, "Arquivo 2", validar_chaves_unicas)
+        chave = _chave_primeira_coluna(df1.iloc[indice1, 0])
+        ocorrencia = chaves1[chave].index(indice1)
+        correspondentes = chaves2.get(chave, [])
+        indice2 = correspondentes[ocorrencia] if ocorrencia < len(correspondentes) else None
+    if indice2 is None or indice2 >= len(df2):
+        raise ValueError("Esta linha não possui correspondente no Arquivo 2.")
+    return {
+        "columns": list(df1.columns),
+        "line1": linha,
+        "line2": indice2 + 2,
+        "values1": df1.iloc[indice1].tolist(),
+        "values2": df2.reindex(columns=df1.columns).iloc[indice2].tolist(),
+        "missingColumns2": [column for column in df1.columns if column not in df2.columns],
+    }
+
+
 def comparar_dataframes(
     arquivo_1_bytes: bytes,
     arquivo_2_bytes: bytes,
@@ -503,6 +538,7 @@ def gerar_arquivo_corrigido(
             valores_arquivo_2[chave] = linha["Valor no Arquivo 2"]
 
         quantidade_alteracoes = 0
+        celulas_para_marcar = []
 
         # --------------------------------------------------------
         # APLICA AS DECISÕES DA INTERFACE
@@ -549,10 +585,7 @@ def gerar_arquivo_corrigido(
                 celula.data_type = "s"
 
             if marcar_alteracoes_laranja and valor_anterior != novo_valor:
-                celula.fill = PatternFill(
-                    fill_type="solid",
-                    fgColor="FF" + cor_alteracoes.lstrip("#").upper(),
-                )
+                celulas_para_marcar.append(celula)
 
             quantidade_alteracoes += 1
 
@@ -605,6 +638,14 @@ def gerar_arquivo_corrigido(
 
         if not incluir_linhas_novas:
             quantidade_linhas_novas = 0
+
+        # Marca somente após copiar os estilos: as linhas novas devem herdar
+        # o preenchimento original, não o destaque aplicado nesta revisão.
+        for celula in celulas_para_marcar:
+            celula.fill = PatternFill(
+                fill_type="solid",
+                fgColor="FF" + cor_alteracoes.lstrip("#").upper(),
+            )
 
         saida = BytesIO()
         workbook.save(saida)

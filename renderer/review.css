@@ -27,3 +27,12 @@
 .custom-dialog textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 60px; padding: 10px; border: 1px solid #dce6e0; border-radius: 8px; color: #193336; font: inherit; }
 .custom-dialog textarea[readonly] { background: #f4f7f5; }
 .custom-dialog :focus-visible { outline: 3px solid #008e45; outline-offset: 2px; }
+.row-details-hint { margin: 0 0 10px; color: #556b62; font-size: 12px; }
+#rows td[tabindex]:focus-visible { outline: 2px solid #008e45; outline-offset: -2px; }
+.row-details-table { overflow: auto; }
+.row-details-table table { width: 100%; table-layout: fixed; }
+.row-details-table th:first-child { width: 16%; }
+.row-details-table th:last-child { width: 20%; }
+.row-details-table td, .row-details-table th { white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; vertical-align: top; max-width: none; user-select: text; }
+.row-details-table th { vertical-align: middle; }
+.row-details-table .selected-detail { background: #eff7f2; }

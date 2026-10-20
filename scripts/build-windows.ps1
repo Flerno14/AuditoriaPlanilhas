@@ -2,6 +2,15 @@ param([switch]$PortableOnly)
 
 $ErrorActionPreference = 'Stop'
 
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$package = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$appVersion = $package.version
+if ($appVersion -isnot [string] -or $appVersion -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+  throw 'A versão em package.json deve ter três números: MAIOR.MENOR.CORREÇÃO (por exemplo, 1.1.2).'
+}
+Set-Location -LiteralPath $projectRoot
+Write-Host "Gerando distribuição da versão $appVersion"
+
 $pythonCandidates = @()
 if ($env:PYTHON -and (Test-Path -LiteralPath $env:PYTHON -PathType Leaf)) {
   $pythonCandidates += [PSCustomObject]@{ Command = $env:PYTHON; Arguments = @() }
@@ -42,7 +51,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Falha ao instalar as dependências Node.js.' }
 & $python.Command @($python.Arguments) -m PyInstaller --clean --noconfirm --onefile --name bridge --distpath dist/python --workpath build/pyinstaller --paths . python/bridge.py
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao empacotar a ponte Python.' }
 
-$projectRoot = Split-Path -Parent $PSScriptRoot
 $electronOutput = Join-Path $projectRoot 'release\\win-unpacked'
 $electronTemporaryOutput = Join-Path $projectRoot 'release\\win-unpacked.tmp'
 $electronBuilt = $false
@@ -69,7 +77,7 @@ if (-not $electronBuilt) {
 }
 
 # The win-unpacked folder is self-contained; the ZIP distributes a portable copy.
-$portableZip = Join-Path $projectRoot 'release\AuditoriaDePlanilhas-Portable-1.0.0.zip'
+$portableZip = Join-Path $projectRoot "release\AuditoriaDePlanilhas-Portable-$appVersion.zip"
 if (Test-Path -LiteralPath $portableZip) {
   Remove-Item -LiteralPath $portableZip -Force
 }
@@ -86,5 +94,5 @@ $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
 if (-not $iscc) {
   throw 'Inno Setup não encontrado. Instale o Inno Setup 6 e adicione ISCC.exe ao PATH.'
 }
-& $iscc.Source 'installer/AuditoriaPlanilhas.iss'
+& $iscc.Source "/DAppVersion=$appVersion" (Join-Path $projectRoot 'installer/AuditoriaPlanilhas.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar o instalador Inno Setup.' }

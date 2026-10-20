@@ -1,6 +1,8 @@
 
 #define AppName "Auditoria de Planilhas"
-#define AppVersion "1.1.0"
+#ifndef AppVersion
+  #error AppVersion deve ser informado a partir do package.json. Use npm run build:windows.
+#endif
 #define AppPublisher "Auditoria de Planilhas"
 #define AppExeName "Auditoria de Planilhas.exe"
 

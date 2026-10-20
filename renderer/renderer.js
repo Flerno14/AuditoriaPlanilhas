@@ -450,6 +450,15 @@ function renderRows() {
     columns.slice(0, 4).forEach((key, columnIndex) => {
       if (record['Decisão'] === 'Valor personalizado' && columnIndex === 3) return;
       const cell = row.insertCell();
+      cell.addEventListener('dblclick', () => openRowDetails(index));
+      if (columnIndex === 0) {
+        cell.tabIndex = 0;
+        cell.setAttribute('aria-label', `Visualizar conteúdo completo da linha ${display(record['Índice/Linha'])}`);
+        cell.setAttribute('aria-haspopup', 'dialog');
+        cell.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') { event.preventDefault(); openRowDetails(index); }
+        });
+      }
       if (record['Decisão'] === 'Valor personalizado' && columnIndex === 2) {
         cell.colSpan = 2;
         cell.className = 'custom-value-cell';
@@ -473,6 +482,46 @@ function renderRows() {
     choice.append(button);
   });
 }
+
+let rowDetailsBusy = false;
+async function openRowDetails(index) {
+  if (!state.comparisonReady || rowDetailsBusy || loadingTasks.size || $('row-details-dialog').open) return;
+  const record = state.report[index];
+  if (!record) return;
+  rowDetailsBusy = true;
+  $('app-shell').inert = true;
+  const requestId = state.compareRequestId;
+  const finishLoading = startLoading('Carregando conteúdo completo da linha...');
+  try {
+    const details = await window.auditoria.callPython('row-details', {
+      file1: state.file1.path, file2: state.file2.path, sheet: state.sheet,
+      fingerprint: state.fingerprint, line: record['Índice/Linha'],
+      alignByFirstColumn: settings.alignByFirstColumn,
+      validateUniqueFirstColumn: settings.validateUniqueFirstColumn
+    });
+    if (requestId !== state.compareRequestId) return;
+    $('row-details-context').textContent = `${state.sheet} · Arquivo 1: linha ${details.line1} · Arquivo 2: linha ${details.line2} · Coluna selecionada: ${record['Nome da Coluna']}`;
+    const decisions = new Map(state.report.filter((item) => item['Índice/Linha'] === record['Índice/Linha'])
+      .map((item) => [item['Nome da Coluna'], item]));
+    const body = $('row-details-rows'); body.replaceChildren();
+    details.columns.forEach((column, position) => {
+      const row = body.insertRow();
+      if (column === record['Nome da Coluna']) row.className = 'selected-detail';
+      const decision = decisions.get(column);
+      const review = decision ? decision['Decisão'] === 'Valor personalizado'
+        ? `Valor personalizado:\n${decision['Valor personalizado'] || '(vazio)'}`
+        : decision['Decisão'] : 'Preservado do Arquivo 1';
+      for (const value of [column, display(details.values1[position]) || '(vazio)',
+        details.missingColumns2.includes(column) ? '(coluna ausente)' : display(details.values2[position]) || '(vazio)', review]) {
+        row.insertCell().textContent = value;
+      }
+    });
+    finishLoading();
+    $('row-details-dialog').showModal();
+  } catch (error) { showError(error); }
+  finally { finishLoading(); rowDetailsBusy = false; $('app-shell').inert = false; }
+}
+$('row-details-close').addEventListener('click', () => $('row-details-dialog').close());
 
 let activeSelectionMenu = null;
 function openSelectionMenu(anchor, choices, currentValue, onSelect) {
@@ -670,18 +719,33 @@ async function exportReport(action, name, emptyMessage) {
   } catch (error) { showError(error); }
 }
 
-async function generate(includeNewRows, markChanges) {
+let generationResolve = null;
+$('generation-cancel').addEventListener('click', () => $('generation-dialog').close());
+$('generation-confirm').addEventListener('click', () => $('generation-dialog').close('continue'));
+$('generation-dialog').addEventListener('close', () => {
+  generationResolve?.($('generation-dialog').returnValue === 'continue'
+    ? { markChanges: $('mark-changes').checked } : null);
+  generationResolve = null;
+  $('generation-dialog').returnValue = '';
+});
+
+async function generate() {
   if (!state.file1 || !state.file2) { notify('Selecione os dois arquivos Excel para continuar.'); return; }
   if (!state.comparisonReady) { notify('Aguarde a conclusão da comparação antes de gerar o arquivo.'); return; }
   if (state.report.some((row) => row['Decisão'] === 'Pendente')) { notify('Resolva todas as diferenças antes de gerar o arquivo.'); return; }
-  if (includeNewRows && state.newRows > 0 && !await previewNewRows(true)) return;
+  if (generationResolve) return;
+  $('generation-dialog').showModal();
+  const options = await new Promise((resolve) => { generationResolve = resolve; });
+  if (!options) return;
+  const { markChanges } = options;
+  if (state.newRows > 0 && !await previewNewRows(true)) return;
   try {
-    const finishLoading = startLoading(includeNewRows ? 'Gerando arquivo corrigido...' : 'Salvando alterações...');
+    const finishLoading = startLoading('Gerando arquivo corrigido...');
     let result;
     try {
-      result = await window.auditoria.callPython('generate', { file1: state.file1.path, file2: state.file2.path, sheet: state.sheet, name: state.file1.name, report: state.report, fingerprint: state.fingerprint, includeNewRows, markChanges, changeColor: settings.changeColor, alignByFirstColumn: settings.alignByFirstColumn, validateUniqueFirstColumn: settings.validateUniqueFirstColumn });
+      result = await window.auditoria.callPython('generate', { file1: state.file1.path, file2: state.file2.path, sheet: state.sheet, name: state.file1.name, report: state.report, fingerprint: state.fingerprint, includeNewRows: true, markChanges, changeColor: settings.changeColor, alignByFirstColumn: settings.alignByFirstColumn, validateUniqueFirstColumn: settings.validateUniqueFirstColumn });
     } finally { finishLoading(); }
-    const suffix = includeNewRows ? '_corrigido' : '_somente_alteracoes';
+    const suffix = '_corrigido';
     const base = state.file1.name.replace(/\.[^.]+$/, ''); const ext = state.file1.name.match(/\.[^.]+$/)?.[0] || '.xlsx';
     const saved = await saveContent(`${base}${suffix}${ext}`, result.content, 'Arquivo salvo');
     if (saved) updateSummary(`Arquivo gerado: ${result.changes} célula(s) alterada(s), ${result.rows} linha(s) nova(s) adicionada(s).`);
@@ -706,7 +770,7 @@ $('match-case').addEventListener('click', (event) => {
 });
 $('export-differences').addEventListener('click', () => exportReport('export-differences', 'diferencas_entre_arquivos.xlsx', 'Não há diferenças para exportar.'));
 $('export-choices').addEventListener('click', () => exportReport('export-choices', 'mudancas_aplicadas.xlsx', 'Não há escolhas para exportar.'));
-$('save-changes').addEventListener('click', () => generate(false, true)); $('generate').addEventListener('click', () => generate(true, false));
+$('generate').addEventListener('click', () => generate());
 
 function renderSettings(values = settingsDraft || settings) {
   for (const key of ['differences', 'choices']) $(`template-${key}-name`).textContent = values.templates[key] ? values.templates[key].split(/[\\/]/).pop() : 'Nenhum modelo selecionado';

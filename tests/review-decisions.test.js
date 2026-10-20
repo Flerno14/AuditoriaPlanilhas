@@ -19,7 +19,7 @@ async function createReview({ aligned = false, decision = 'Usar Arquivo 2' } = {
         focus() {}, getBoundingClientRect() { return this.rect || { left: 20, right: 210, top: 20, bottom: 54, width: 190 }; },
         dispatchEvent(event) { return this.emit(event.type); },
         replaceChildren(...children) { this.children = children; },
-        insertRow() { const row = { cells: [], append(cell) { this.cells.push(cell); }, insertCell() { const cell = { append(...children) { this.children = children; } }; this.cells.push(cell); return cell; } }; (this.children ||= []).push(row); return row; },
+        insertRow() { const row = { cells: [], append(cell) { this.cells.push(cell); }, insertCell() { const listeners = {}; const cell = { append(...children) { this.children = children; }, setAttribute() {}, addEventListener(name, handler) { listeners[name] = handler; }, emit(name, extra = {}) { return listeners[name]?.({ target: this, preventDefault() {}, ...extra }); } }; this.cells.push(cell); return cell; } }; (this.children ||= []).push(row); return row; },
         setAttribute(name, value) { attributes[name] = value; },
         getAttribute(name) { return attributes[name] ?? null; },
         removeAttribute(name) { delete attributes[name]; }, showModal() { this.open = true; },
@@ -57,8 +57,13 @@ async function createReview({ aligned = false, decision = 'Usar Arquivo 2' } = {
     },
     async openFile() { return { path: 'novo.xlsx', name: 'novo.xlsx' }; },
     async callPython(action, payload) {
+      if (action === 'row-details') {
+        calls.details = payload;
+        if (controls.detailsError) throw new Error(controls.detailsError);
+        return controls.details;
+      }
       if (action === 'preview-new-rows') return controls.preview;
-      if (action === 'generate') { calls.generated++; return { content: '', changes: 1, rows: 1 }; }
+      if (action === 'generate') { calls.generated++; calls.generation = payload; return { content: '', changes: 1, rows: 1 }; }
       if (action === 'validate-session') {
         if (controls.sessionError) throw new Error(controls.sessionError);
         return true;
@@ -503,6 +508,47 @@ test('o menu de decisão mantém a escolha no relatório e permite desfazer', as
   assert.equal(r.element('undo-decision').disabled, false);
 });
 
+test('double click opens full row details including custom decisions without modifying the review', async () => {
+  const r = await createReview();
+  const longText = '<b>Texto literal</b>\n' + 'Conteúdo longo '.repeat(100);
+  r.controls.details = { columns: ['ID', 'Nome', 'Nota'], line1: 5, line2: 9,
+    values1: [1, longText, 'Contexto'], values2: [1, 'Depois', null], missingColumns2: ['Nota'] };
+  r.read(`state.report = [{ 'Índice/Linha': 5, 'Nome da Coluna': 'Nome',
+    'Valor no Arquivo 1': 'Antes', 'Valor no Arquivo 2': 'Depois',
+    'Decisão': 'Valor personalizado', 'Valor personalizado': 'Minha escolha' }]`);
+  r.read('actualRenderRows()');
+  await r.element('rows').children[0].cells[2].emit('dblclick');
+  assert.equal(r.element('row-details-dialog').open, true);
+  assert.equal(r.calls.details.line, 5);
+  assert.equal(r.calls.details.fingerprint, 'a'.repeat(64));
+  const rows = r.element('row-details-rows').children;
+  assert.equal(rows.length, 3);
+  assert.equal(rows[1].cells[1].textContent, longText);
+  assert.equal(rows[1].cells[3].textContent, 'Valor personalizado:\nMinha escolha');
+  assert.equal(rows[2].cells[2].textContent, '(coluna ausente)');
+  assert.match(r.element('row-details-context').textContent, /Arquivo 2: linha 9/);
+  r.element('row-details-close').emit('click');
+  assert.equal(r.element('row-details-dialog').open, false);
+  assert.equal(r.read("state.report[0]['Valor personalizado']"), 'Minha escolha');
+  assert.equal(r.calls.sessions.length, 0);
+});
+
+test('row details can be opened by keyboard and failed source validation stays in the error modal', async () => {
+  const r = await createReview();
+  r.read(`state.report = [{ 'Índice/Linha': 2, 'Nome da Coluna': 'Nome', 'Decisão': 'Pendente' }]`);
+  r.read('actualRenderRows()');
+  r.controls.detailsError = 'Os arquivos mudaram desde a comparação.';
+  await r.element('rows').children[0].cells[0].emit('dblclick');
+  assert.equal(r.element('error-dialog').open, true);
+  assert.equal(r.element('row-details-dialog').open, undefined);
+  r.controls.detailsError = null;
+  r.controls.details = { columns: ['Nome'], line1: 2, line2: 2, values1: ['A'], values2: ['B'], missingColumns2: [] };
+  r.element('rows').children[0].cells[0].emit('keydown', { key: 'Enter' });
+  for (let i = 0; i < 10 && !r.element('row-details-dialog').open; i++) await Promise.resolve();
+  assert.equal(r.element('row-details-dialog').open, true);
+  assert.equal(r.read("state.report[0]['Decisão']"), 'Pendente');
+});
+
 test('o filtro usa o mesmo menu e envia a mudança ao controle original', async () => {
   const r = await createReview({ decision: 'Pendente' });
   const select = r.element('filter-decision');
@@ -560,10 +606,16 @@ test('summary counts changed cells separately from additional rows', async () =>
   assert.match(r.element('summary').textContent, /Linhas novas disponíveis: 10/);
 });
 
-test('generation with new rows waits for preview confirmation and supports cancellation', async () => {
+for (const markChanges of [false, true]) {
+test(`generation with marking=${markChanges} confirms new rows and supports cancellation`, async () => {
   const r = await createReview();
+  r.element('mark-changes').checked = markChanges;
+  r.read("settings.changeColor = '#123456'");
   r.read('state.newRows = 1');
   let generating = r.element('generate').emit('click');
+  assert.equal(r.element('generation-dialog').open, true);
+  assert.equal(r.calls.generated, 0);
+  r.element('generation-confirm').emit('click');
   for (let i = 0; i < 10 && !r.element('preview-dialog').open; i++) await Promise.resolve();
   assert.equal(r.element('preview-dialog').open, true);
   assert.equal(r.calls.generated, 0);
@@ -571,10 +623,44 @@ test('generation with new rows waits for preview confirmation and supports cance
   await generating;
   assert.equal(r.calls.generated, 0);
   generating = r.element('generate').emit('click');
+  r.element('generation-confirm').emit('click');
   for (let i = 0; i < 10 && !r.element('preview-dialog').open; i++) await Promise.resolve();
   r.element('preview-confirm').emit('click');
   await generating;
   assert.equal(r.calls.generated, 1);
+  assert.equal(r.calls.generation.includeNewRows, true);
+  assert.equal(r.calls.generation.markChanges, markChanges);
+  assert.equal(r.calls.generation.changeColor, '#123456');
+  assert.equal(r.read("state.report[0]['Decisão']"), 'Usar Arquivo 2');
+});
+}
+
+test('generation options cancel or Escape stops generation without changing decisions', async () => {
+  const r = await createReview();
+  for (const cancelButton of [true, false]) {
+    const generating = r.element('generate').emit('click');
+    assert.equal(r.element('generation-dialog').open, true);
+    r.element('mark-changes').checked = true;
+    if (cancelButton) r.element('generation-cancel').emit('click');
+    else r.element('generation-dialog').close(); // Native Escape closes with no return value.
+    await generating;
+    assert.equal(r.calls.generated, 0);
+    assert.equal(r.element('preview-dialog').open, undefined);
+    assert.equal(r.read("state.report[0]['Decisão']"), 'Usar Arquivo 2');
+  }
+});
+
+test('generation options continue without new rows passes selected marking to Python', async () => {
+  const r = await createReview();
+  r.read('state.newRows = 0');
+  const generating = r.element('generate').emit('click');
+  r.element('mark-changes').checked = true;
+  r.element('generation-confirm').emit('click');
+  await generating;
+  assert.equal(r.calls.generated, 1);
+  assert.equal(r.calls.generation.markChanges, true);
+  assert.equal(r.calls.generation.includeNewRows, true);
+  assert.equal(r.element('preview-dialog').open, undefined);
 });
 
 test('preview paginates all additional rows', async () => {

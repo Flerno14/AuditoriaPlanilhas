@@ -85,6 +85,27 @@ class SessionIdentityTests(unittest.TestCase):
         self.assertFalse(response['ok'])
         self.assertIn('acessar os arquivos', response['error'])
 
+    def test_row_details_preserve_full_context_and_check_file_identity(self):
+        from datetime import datetime
+        text = '<b>Literal</b>\n' + 'Texto completo ' * 100
+        self.first.write_bytes(spreadsheet(['ID', 'Nome', 'Data', 'Nota'],
+            [[1, text, datetime(2026, 10, 20), 'Só no original']]))
+        self.second.write_bytes(spreadsheet(['Data', 'Nome', 'ID'],
+            [[datetime(2026, 10, 21), 'Bia', 1]]))
+        self.context['fingerprint'] = self.request('compare', self.context)['result']['fingerprint']
+        response = self.request('row-details', dict(self.context, line=2))
+        self.assertTrue(response['ok'], response)
+        details = response['result']
+        self.assertEqual(details['columns'], ['ID', 'Nome', 'Data', 'Nota'])
+        self.assertEqual(details['values1'][1], text)
+        self.assertEqual(details['values2'][1], 'Bia')
+        self.assertIn('__excel_datetime__', details['values1'][2])
+        self.assertEqual(details['missingColumns2'], ['Nota'])
+        self.assertEqual((details['line1'], details['line2']), (2, 2))
+        self.assertFalse(self.request('row-details', dict(self.context, line=0))['ok'])
+        self.second.write_bytes(spreadsheet(['ID', 'Nome'], [[1, 'Mudou']]))
+        self.assertFalse(self.request('row-details', dict(self.context, line=2))['ok'])
+
     def test_changed_rules_and_missing_identity_are_rejected(self):
         for context in [dict(self.context, alignByFirstColumn=True), dict(self.context, fingerprint=None)]:
             response = self.request('validate-session', context)

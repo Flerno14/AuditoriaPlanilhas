@@ -24,6 +24,19 @@ def generate(first, second, report, **options):
 
 
 class BusinessRulesTests(unittest.TestCase):
+    def test_row_details_match_reordered_and_repeated_keys(self):
+        first = spreadsheet(['ID', 'Valor'], [['x', 'Primeiro'], ['y', 'Outro'], ['x', 'Segundo']])
+        second = spreadsheet(['ID', 'Valor'], [['y', 'Mudou'], ['x', 'Novo primeiro'], ['x', 'Novo segundo']])
+        for line, expected_line, expected in [(2, 3, 'Novo primeiro'), (3, 2, 'Mudou'), (4, 4, 'Novo segundo')]:
+            details = core.obter_detalhes_linha(first, second, 'Dados', line, True, False)
+            self.assertEqual(details['line2'], expected_line)
+            self.assertEqual(details['values2'][1], expected)
+        with self.assertRaisesRegex(ValueError, 'duplicada'):
+            core.obter_detalhes_linha(first, second, 'Dados', 2, True, True)
+        for invalid in [0, -1, True, 2.5, 5]:
+            with self.subTest(line=invalid), self.assertRaisesRegex(ValueError, 'Linha inválida'):
+                core.obter_detalhes_linha(first, second, 'Dados', invalid)
+
     def test_exports_write_first_template_sheet_even_when_another_is_active(self):
         with tempfile.TemporaryDirectory() as folder:
             template = Path(folder) / 'modelo.xlsx'
@@ -135,21 +148,63 @@ class BusinessRulesTests(unittest.TestCase):
 
     def test_only_approved_changes_are_written_and_highlighted(self):
         first = spreadsheet(['ID', 'Valor'], [[1, 'A'], [2, 'B']])
-        second = spreadsheet(['ID', 'Valor'], [[1, 'Novo A'], [2, 'Novo B']])
+        second = spreadsheet(['ID', 'Valor'], [[1, 'Novo A'], [2, 'Novo B'], [3, 'Linha nova']])
         report, _ = core.comparar_dataframes(first, second, 'Dados')
         report['Decisão'] = ['Usar Arquivo 2', 'Manter Arquivo 1']
         for mark in (False, True):
-            content, changes, _ = generate(first, second, report, marcar_alteracoes_laranja=mark, cor_alteracoes='#123456')
+            content, changes, rows = generate(first, second, report, incluir_linhas_novas=True,
+                                              marcar_alteracoes_laranja=mark, cor_alteracoes='#123456')
             book = load_workbook(BytesIO(content))
             self.assertEqual(book.active['B2'].value, 'Novo A')
             self.assertEqual(book.active['B3'].value, 'B')
             self.assertEqual(changes, 1)
+            self.assertEqual(rows, 1)
+            self.assertEqual(list(book.active.values)[-1], (3, 'Linha nova'))
             self.assertIsNone(book.active['B3'].fill.patternType)
             if mark:
                 self.assertEqual(book.active['B2'].fill.fgColor.rgb, 'FF123456')
             else:
                 self.assertIsNone(book.active['B2'].fill.patternType)
             book.close()
+
+    def test_new_rows_inherit_original_style_without_review_highlight(self):
+        from openpyxl.styles import Alignment, Border, Font, Protection, Side
+        for original_color in (None, 'FF112233'):
+            for decision in ('Usar Arquivo 2', 'Valor personalizado'):
+                for mark in (False, True):
+                    with self.subTest(original_color=original_color, decision=decision, mark=mark):
+                        book = load_workbook(BytesIO(spreadsheet(['ID', 'Valor'], [[1, 'Antes']])))
+                        cell = book.active['B2']
+                        if original_color:
+                            cell.fill = PatternFill('solid', fgColor=original_color)
+                        cell.font = Font(bold=True, color='FF445566')
+                        cell.alignment = Alignment(wrap_text=True)
+                        cell.border = Border(bottom=Side(style='thin', color='FF778899'))
+                        cell.protection = Protection(locked=False)
+                        cell.number_format = '@'
+                        original_style = cell._style
+                        output = BytesIO()
+                        book.save(output)
+                        book.close()
+                        first = output.getvalue()
+                        second = spreadsheet(['ID', 'Valor'], [[1, 'Depois'], [2, 'Nova 1'], [3, 'Nova 2']])
+                        report, _ = core.comparar_dataframes(first, second, 'Dados')
+                        report['Decisão'] = decision
+                        report['Valor personalizado'] = 'Texto personalizado'
+                        content, changes, rows = generate(first, second, report,
+                            incluir_linhas_novas=True, marcar_alteracoes_laranja=mark, cor_alteracoes='#123456')
+                        result = load_workbook(BytesIO(content))
+                        self.assertEqual((changes, rows), (1, 2))
+                        self.assertEqual(result.active['B2'].value,
+                            'Depois' if decision == 'Usar Arquivo 2' else 'Texto personalizado')
+                        if mark:
+                            self.assertEqual(result.active['B2'].fill.fgColor.rgb, 'FF123456')
+                        else:
+                            self.assertEqual(result.active['B2']._style, original_style)
+                        for address, value in [('B3', 'Nova 1'), ('B4', 'Nova 2')]:
+                            self.assertEqual(result.active[address].value, value)
+                            self.assertEqual(result.active[address]._style, original_style)
+                        result.close()
 
     def test_untouched_formulas_styles_and_other_sheets_are_preserved(self):
         raw = spreadsheet(['ID', 'Valor', 'Total'], [[1, 'A', '=1+2']])

@@ -20,6 +20,7 @@
 .table-toolbar { gap: 12px; padding-bottom: 12px; }
 .table-toolbar .filter-count { margin-left: 12px; }
 .review-actions, .output-actions { display: flex; align-items: center; gap: 10px; }
+.output-actions { flex-wrap: wrap; }
 .filter-toolbar { gap: 8px; padding-bottom: 12px; }
 .filter-toolbar > select { min-width: 0; width: 185px; max-width: 22%; }
 .search-box { flex: 1; max-width: 420px; }

@@ -1,3 +1,5 @@
-/* The configured accent is for generated workbook cells; keep the action button neutral. */
-.actions #save-changes{border-color:#dce6e0;color:#24463d}
-.actions #save-changes:hover{background:#eff7f2;border-color:#dce6e0}
+/* The configured highlight color applies only to workbook cells. */
+.mark-changes-option{display:flex;align-items:center;gap:8px;color:#24463d;font-size:13px;cursor:pointer}
+.mark-changes-option input{width:16px;height:16px;margin:0;accent-color:#008e45}
+.mark-changes-option input:focus-visible{outline:2px solid #008e45;outline-offset:3px}
+.preview-dialog.generation-dialog{width:min(520px,calc(100vw - 48px))}

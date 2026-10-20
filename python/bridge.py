@@ -153,6 +153,16 @@ def report_progress(data, message):
 
 def execute(action, data):
     report_progress(data, 'Lendo arquivos e verificando a solicitação...')
+    if action == 'row-details':
+        first, second = checked_session_files(data)
+        details = core.obter_detalhes_linha(
+            first, second, data['sheet'], data['line'],
+            bool(data.get('alignByFirstColumn', False)),
+            bool(data.get('validateUniqueFirstColumn', True)),
+        )
+        for key in ('values1', 'values2'):
+            details[key] = [json_value(value) for value in details[key]]
+        return details
     if action == 'preview-new-rows':
         first, second = checked_session_files(data)
         report_progress(data, 'Preparando as linhas novas para visualização...')
