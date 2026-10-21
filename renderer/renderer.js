@@ -3,6 +3,9 @@ let sessionWrites = Promise.resolve();
 let sessionRevision = 0;
 let sessionDirty = false;
 let pendingSessionSnapshot = null;
+let sessionSaveTimer = null;
+let sessionWriteActive = null;
+const sessionSaveDelayMs = 250;
 let closingAfterSave = false;
 let restoringSession = false;
 let undoHistory = [];
@@ -18,7 +21,7 @@ let filterCache = null;
 let searchCache = new WeakMap();
 let searchTimer;
 function reportPageSize() { return [50, 100, 250].includes(Number($('page-size').value)) ? Number($('page-size').value) : 50; }
-const settings = { templates: { differences: null, choices: null }, changeColor: '#FFA500', alignByFirstColumn: false, validateUniqueFirstColumn: true, replaceFilenameDates: false };
+const settings = { templates: { differences: null, choices: null }, changeColor: '#FFA500', alignByFirstColumn: false, validateUniqueFirstColumn: true, replaceFilenameDates: false, validateTranslationElements: false, highlightTextDifferences: false };
 let settingsDraft = null;
 const loadingTasks = new Map();
 let nextLoadingTaskId = 0;
@@ -79,31 +82,57 @@ $('cancel-processing').addEventListener('click', async () => {
   catch (error) { showError(error); }
 });
 
-function saveReview() {
+function saveReview({ defer = false } = {}) {
   const currentReady = state.comparisonReady && state.fingerprint;
   if (!currentReady && !sessionDirty) return sessionWrites;
-  const snapshot = currentReady ? structuredClone({
+  // Keep only references to the latest review until an actual write starts.
+  const snapshot = currentReady ? {
     version: 1, file1: state.file1, file2: state.file2, sheet: state.sheet,
     report: state.report, newRows: state.newRows, fingerprint: state.fingerprint,
     rules: { alignByFirstColumn: settings.alignByFirstColumn, validateUniqueFirstColumn: settings.validateUniqueFirstColumn }
-  }) : pendingSessionSnapshot;
+  } : pendingSessionSnapshot;
   if (!snapshot) return sessionWrites;
   pendingSessionSnapshot = snapshot;
-  const revision = ++sessionRevision;
+  sessionRevision++;
   sessionDirty = true;
-  $('session-status').textContent = 'Salvando revisão...';
-  sessionWrites = sessionWrites.catch(() => {}).then(() => window.auditoria.saveSession(snapshot));
-  sessionWrites.then(() => {
-    if (revision === sessionRevision) {
-      sessionDirty = false;
-      $('session-status').textContent = 'Revisão salva automaticamente neste computador.';
-    }
-  }).catch((error) => {
-    if (revision === sessionRevision) {
+  $('session-status').textContent = 'Alterações aguardando salvamento...';
+  if (!defer) return flushSessionWrites();
+  if (!sessionWriteActive) {
+    clearTimeout(sessionSaveTimer);
+    sessionSaveTimer = setTimeout(() => { flushSessionWrites().catch(() => {}); }, sessionSaveDelayMs);
+  }
+  return sessionWriteActive || Promise.resolve();
+}
+
+function flushSessionWrites() {
+  clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = null;
+  if (sessionWriteActive) return sessionWriteActive;
+  if (!sessionDirty || !pendingSessionSnapshot) return Promise.resolve();
+  sessionWrites = Promise.resolve().then(async () => {
+    try {
+      while (sessionDirty && pendingSessionSnapshot) {
+        const revision = sessionRevision;
+        const snapshot = structuredClone(pendingSessionSnapshot);
+        $('session-status').textContent = 'Salvando revisão...';
+        await window.auditoria.saveSession(snapshot);
+        if (revision === sessionRevision) {
+          sessionDirty = false;
+          pendingSessionSnapshot = null;
+          $('session-status').textContent = 'Revisão salva automaticamente neste computador.';
+        }
+        // Changes received during the write replace the pending review.
+        // Only the latest version is copied and written on the next iteration.
+      }
+    } catch (error) {
       $('session-status').textContent = 'Revisão ainda não salva. Use “Salvar sessão” para tentar novamente.';
       showError(error);
+      throw error;
+    } finally {
+      sessionWriteActive = null;
     }
   });
+  sessionWriteActive = sessionWrites;
   return sessionWrites;
 }
 
@@ -114,7 +143,7 @@ async function restoreReview() {
   shell.inert = true;
   const finishLoading = startLoading('Recuperando revisão salva...');
   try {
-    await sessionWrites.catch(() => {});
+    await flushSessionWrites().catch(() => {});
     const saved = await window.auditoria.getSession();
     if (!saved) { $('session-status').textContent = 'Nenhuma sessão salva neste computador.'; return; }
     if (!await confirmDiscardReview()) return;
@@ -138,6 +167,7 @@ async function restoreReview() {
     resetReviewTools();
     renderSettings(); renderRows(); updateSummary();
     sessionDirty = false;
+    pendingSessionSnapshot = null;
     $('session-status').textContent = 'Sessão retomada. As próximas decisões serão salvas automaticamente.';
   } catch (error) {
     $('session-status').textContent = 'Não foi possível retomar a sessão salva.';
@@ -152,7 +182,7 @@ window.addEventListener('beforeunload', (event) => {
   event.preventDefault();
   event.returnValue = false;
   $('app-shell').inert = true;
-  saveReview().then(() => { closingAfterSave = true; window.close(); })
+  flushSessionWrites().then(() => { closingAfterSave = true; window.close(); })
     .catch(() => { $('app-shell').inert = false; });
 });
 
@@ -241,12 +271,12 @@ function resetReviewTools() {
   $('filter-column').value = '';
 }
 
-function changeDecisions(indices, choice, customValue) {
+function changeDecisions(indices, choice, customValue, addedIndex = null) {
   if (!state.comparisonReady) return 0;
   if (choice === 'Valor personalizado' && typeof customValue !== 'string') return 0;
-  const changes = indices.filter((index) => state.report[index]['Decisão'] !== choice
+  const changes = indices.filter((index) => index === addedIndex || state.report[index]['Decisão'] !== choice
     || (choice === 'Valor personalizado' && state.report[index]['Valor personalizado'] !== customValue))
-    .map((index) => ({ index, previous: state.report[index]['Decisão'], custom: state.report[index]['Valor personalizado'] }));
+    .map((index) => ({ index, previous: state.report[index]['Decisão'], custom: state.report[index]['Valor personalizado'], added: index === addedIndex }));
   if (!changes.length) return 0;
   undoHistory.push(changes);
   if (undoHistory.length > 100) undoHistory.shift();
@@ -257,23 +287,26 @@ function changeDecisions(indices, choice, customValue) {
     searchCache.delete(state.report[index]);
   });
   reportRevision++;
+  if (addedIndex !== null) refreshReviewColumns();
   $('undo-decision').disabled = false;
-  renderRows(); updateSummary(); saveReview().catch(() => {});
+  renderRows(); refreshRowDecisions(); updateSummary(); saveReview({ defer: true }).catch(() => {});
   return changes.length;
 }
 
 function undoDecision() {
   const changes = undoHistory.pop();
   if (!changes || !state.comparisonReady) return;
-  changes.forEach(({ index, previous, custom }) => {
+  changes.slice().reverse().forEach(({ index, previous, custom, added }) => {
     state.report[index]['Decisão'] = previous;
     if (custom !== undefined) state.report[index]['Valor personalizado'] = custom;
     else delete state.report[index]['Valor personalizado'];
     searchCache.delete(state.report[index]);
+    if (added) state.report.splice(index, 1);
   });
   reportRevision++;
+  if (changes.some((change) => change.added)) refreshReviewColumns();
   $('undo-decision').disabled = !undoHistory.length;
-  renderRows(); updateSummary(); saveReview().catch(() => {});
+  renderRows(); refreshRowDecisions(); updateSummary(); saveReview({ defer: true }).catch(() => {});
   notify(`${changes.length} decisão(ões) restaurada(s).`);
 }
 
@@ -289,10 +322,14 @@ function nextPending() {
 }
 
 let customDecisionIndex = null;
-function openCustomDecision(index) {
+let customDecisionReturnFocus = null;
+let customDecisionEntry = null;
+function openCustomDecision(index, returnFocus = null, entry = null) {
   if (!state.comparisonReady) return;
-  const record = state.report[index];
+  const record = entry?.record || state.report[index];
+  customDecisionEntry = entry;
   customDecisionIndex = index;
+  customDecisionReturnFocus = returnFocus;
   $('custom-context').textContent = `Linha ${display(record['Índice/Linha'])} · Coluna ${display(record['Nome da Coluna'])}`;
   $('custom-file1').value = display(record['Valor no Arquivo 1']);
   $('custom-file2').value = display(record['Valor no Arquivo 2']);
@@ -301,13 +338,27 @@ function openCustomDecision(index) {
   $('custom-value').focus();
 }
 $('custom-cancel').addEventListener('click', () => $('custom-dialog').close());
+$('custom-dialog').addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault(); event.stopPropagation();
+  $('custom-dialog').close();
+});
+$('custom-dialog').addEventListener('cancel', (event) => {
+  event.preventDefault();
+  $('custom-dialog').close();
+});
 $('custom-form').addEventListener('submit', (event) => {
   event.preventDefault();
-  if (customDecisionIndex !== null) changeDecisions([customDecisionIndex], 'Valor personalizado', $('custom-value').value);
+  if (customDecisionEntry) applyRowDecision(customDecisionEntry, 'Valor personalizado', $('custom-value').value);
+  else if (customDecisionIndex !== null) changeDecisions([customDecisionIndex], 'Valor personalizado', $('custom-value').value);
   $('custom-dialog').close();
 });
 $('custom-dialog').addEventListener('close', () => {
-  document.querySelector(`.decision[data-index="${customDecisionIndex}"]`)?.focus({ preventScroll: true });
+  const target = $('row-details-dialog').open && customDecisionReturnFocus
+    ? customDecisionReturnFocus : document.querySelector(`.decision[data-index="${customDecisionIndex}"]`);
+  target?.focus({ preventScroll: true });
+  customDecisionReturnFocus = null;
+  customDecisionEntry = null;
   customDecisionIndex = null;
 });
 
@@ -356,7 +407,7 @@ async function changeFiles(action) {
   $('app-shell').inert = true;
   try {
     if (!await confirmDiscardReview(action)) return;
-    await sessionWrites.catch(() => {});
+    await flushSessionWrites().catch(() => {});
     if (action === 'clear') {
       await window.auditoria.clearSession();
       state.compareRequestId++;
@@ -429,6 +480,7 @@ async function compare({ discardConfirmed = false } = {}) {
 }
 
 function renderRows() {
+  $('text-diff-legend').hidden = !settings.highlightTextDifferences;
   const body = $('rows'); body.replaceChildren();
   const indices = filteredReportIndices();
   const pageSize = reportPageSize();
@@ -447,6 +499,9 @@ function renderRows() {
   indices.slice(reportPage * pageSize, (reportPage + 1) * pageSize).forEach((index) => {
     const record = state.report[index];
     const row = body.insertRow();
+    const textDiff = settings.highlightTextDifferences && record['Decisão'] !== 'Valor personalizado'
+      && typeof record[columns[2]] === 'string' && typeof record[columns[3]] === 'string'
+      ? TextDiff.compare(record[columns[2]], record[columns[3]]) : null;
     columns.slice(0, 4).forEach((key, columnIndex) => {
       if (record['Decisão'] === 'Valor personalizado' && columnIndex === 3) return;
       const cell = row.insertCell();
@@ -469,8 +524,12 @@ function renderRows() {
       const value = record[key];
       const other = columnIndex === 2 ? record[columns[3]] : columnIndex === 3 ? record[columns[2]] : undefined;
       const text = columnIndex >= 2 ? comparisonDisplay(value, other) : display(value);
-      cell.textContent = text;
+      if (textDiff && columnIndex >= 2) {
+        TextDiff.render(cell, columnIndex === 2 ? textDiff.left : textDiff.right, columnIndex === 2 ? 'removed' : 'added');
+        cell.className = 'text-diff-cell';
+      } else cell.textContent = text;
       cell.title = text === display(value) ? text : JSON.stringify(display(value));
+      if (textDiff?.coarse && columnIndex >= 2) cell.title += '\nDestaque por bloco para manter a navegação responsiva neste texto extenso.';
     });
     const choice = row.insertCell(); const button = document.createElement('button');
     button.className = 'decision'; button.textContent = record['Decisão']; button.dataset.index = index;
@@ -480,10 +539,73 @@ function renderRows() {
       ['Pendente', 'Manter Arquivo 1', 'Usar Arquivo 2', 'Valor personalizado'].map((value) => ({ value, label: value })),
       state.report[index]['Decisão'], (value) => value === 'Valor personalizado' ? openCustomDecision(index) : changeDecisions([index], value)));
     choice.append(button);
+    const issues = translationIssues(record);
+    if (issues.length) {
+      const warning = document.createElement('button');
+      warning.type = 'button'; warning.className = 'translation-warning';
+      warning.textContent = `⚠ ${issues.length} aviso(s)`;
+      warning.setAttribute('aria-label', `Avisos de tradução da linha ${record['Índice/Linha']}, coluna ${record['Nome da Coluna']}`);
+      warning.setAttribute('aria-haspopup', 'dialog');
+      warning.addEventListener('click', () => openTranslationWarnings(index));
+      choice.append(warning);
+    }
   });
 }
 
+function translationIssues(record) {
+  if (!settings.validateTranslationElements || !record) return [];
+  const candidate = record['Decisão'] === 'Manter Arquivo 1' ? record['Valor no Arquivo 1']
+    : record['Decisão'] === 'Valor personalizado' ? record['Valor personalizado'] : record['Valor no Arquivo 2'];
+  return TranslationValidation.check(record['Valor no Arquivo 1'], candidate);
+}
+
+function openTranslationWarnings(index) {
+  const record = state.report[index];
+  const issues = translationIssues(record);
+  if (!issues.length) return;
+  $('translation-context').textContent = `Linha ${record['Índice/Linha']} · Coluna ${record['Nome da Coluna']} · Arquivo 1 comparado com ${record['Decisão'] === 'Valor personalizado' ? 'o valor personalizado' : 'o Arquivo 2'}.`;
+  $('translation-warnings').textContent = issues.join('\n');
+  $('translation-dialog').showModal();
+}
+$('translation-close').addEventListener('click', () => $('translation-dialog').close());
+
 let rowDetailsBusy = false;
+function refreshReviewColumns() {
+  const select = $('filter-column');
+  const selected = select.value;
+  const names = [...new Set(state.report.map((record) => record['Nome da Coluna']))];
+  select.replaceChildren(new Option('Todas as colunas', ''), ...names.map((name) => new Option(name, name)));
+  select.value = names.includes(selected) ? selected : '';
+}
+let rowDecisionView = null;
+function applyRowDecision(entry, choice, customValue) {
+  if (rowDecisionView?.report !== state.report) return;
+  let index = state.report.indexOf(entry.record);
+  let addedIndex = null;
+  if (index < 0) {
+    index = state.report.length;
+    addedIndex = index;
+    state.report.push(entry.record);
+  }
+  changeDecisions([index], choice, customValue, addedIndex);
+}
+function refreshRowDecisions() {
+  if (!rowDecisionView || rowDecisionView.report !== state.report) return;
+  const includedRecords = new Set(state.report);
+  for (const { record, status, button } of rowDecisionView.entries) {
+    const included = includedRecords.has(record);
+    const choice = included ? record['Decisão'] : 'Manter Arquivo 1';
+    const review = record['Decisão'] === 'Valor personalizado'
+      ? `Valor personalizado:\n${record['Valor personalizado'] || '(vazio)'}` : record['Decisão'];
+    const issues = included ? translationIssues(record) : [];
+    const detail = included && choice === 'Valor personalizado' ? review : '';
+    const text = issues.length ? `${detail}\n⚠ Avisos de tradução:\n${issues.join('\n')}` : detail;
+    if (status.textContent !== text) status.textContent = text;
+    button.textContent = choice;
+    status.hidden = !text;
+  }
+  $('row-details-undo').disabled = !undoHistory.length;
+}
 async function openRowDetails(index) {
   if (!state.comparisonReady || rowDetailsBusy || loadingTasks.size || $('row-details-dialog').open) return;
   const record = state.report[index];
@@ -501,27 +623,54 @@ async function openRowDetails(index) {
     });
     if (requestId !== state.compareRequestId) return;
     $('row-details-context').textContent = `${state.sheet} · Arquivo 1: linha ${details.line1} · Arquivo 2: linha ${details.line2} · Coluna selecionada: ${record['Nome da Coluna']}`;
-    const decisions = new Map(state.report.filter((item) => item['Índice/Linha'] === record['Índice/Linha'])
-      .map((item) => [item['Nome da Coluna'], item]));
+    const decisions = new Map();
+    state.report.forEach((item, itemIndex) => {
+      if (item['Índice/Linha'] === record['Índice/Linha']) decisions.set(item['Nome da Coluna'], itemIndex);
+    });
+    rowDecisionView = { report: state.report, entries: [] };
     const body = $('row-details-rows'); body.replaceChildren();
     details.columns.forEach((column, position) => {
       const row = body.insertRow();
       if (column === record['Nome da Coluna']) row.className = 'selected-detail';
-      const decision = decisions.get(column);
-      const review = decision ? decision['Decisão'] === 'Valor personalizado'
-        ? `Valor personalizado:\n${decision['Valor personalizado'] || '(vazio)'}`
-        : decision['Decisão'] : 'Preservado do Arquivo 1';
+      const decisionIndex = decisions.get(column);
       for (const value of [column, display(details.values1[position]) || '(vazio)',
-        details.missingColumns2.includes(column) ? '(coluna ausente)' : display(details.values2[position]) || '(vazio)', review]) {
+        details.missingColumns2.includes(column) ? '(coluna ausente)' : display(details.values2[position]) || '(vazio)']) {
         row.insertCell().textContent = value;
       }
+      const cell = row.insertCell();
+      const decisionRecord = decisionIndex === undefined ? {
+        'Índice/Linha': record['Índice/Linha'], 'Nome da Coluna': column,
+        'Valor no Arquivo 1': details.values1[position] ?? null, 'Valor no Arquivo 2': details.values2[position] ?? null,
+        'Decisão': 'Manter Arquivo 1'
+      } : state.report[decisionIndex];
+      const status = document.createElement('div');
+      status.setAttribute('aria-live', 'polite');
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'decision';
+      button.setAttribute('aria-label', `Decisão da coluna ${column}`); button.setAttribute('aria-haspopup', 'listbox');
+      const entry = { record: decisionRecord, status, button };
+      button.addEventListener('click', () => {
+        if (rowDecisionView?.report !== state.report) return;
+        const included = state.report.includes(decisionRecord);
+        openSelectionMenu(button, ['Pendente', 'Manter Arquivo 1', 'Usar Arquivo 2', 'Valor personalizado'].map((value) => ({
+          value, label: value === 'Usar Arquivo 2' && details.missingColumns2.includes(column) ? 'Usar Arquivo 2 (coluna ausente)' : value,
+          disabled: value === 'Usar Arquivo 2' && details.missingColumns2.includes(column)
+        })), included ? decisionRecord['Decisão'] : 'Manter Arquivo 1', (choice) => {
+          if (choice === 'Valor personalizado') openCustomDecision(decisionIndex, button, entry);
+          else applyRowDecision(entry, choice);
+        });
+      });
+      cell.append(status, button);
+      rowDecisionView.entries.push(entry);
     });
+    refreshRowDecisions();
     finishLoading();
     $('row-details-dialog').showModal();
   } catch (error) { showError(error); }
   finally { finishLoading(); rowDetailsBusy = false; $('app-shell').inert = false; }
 }
 $('row-details-close').addEventListener('click', () => $('row-details-dialog').close());
+$('row-details-undo').addEventListener('click', undoDecision);
+$('row-details-dialog').addEventListener('close', () => { activeSelectionMenu?.close(); rowDecisionView = null; });
 
 let activeSelectionMenu = null;
 function openSelectionMenu(anchor, choices, currentValue, onSelect) {
@@ -535,7 +684,7 @@ function openSelectionMenu(anchor, choices, currentValue, onSelect) {
     item.setAttribute('aria-selected', String(value === currentValue));
     item.textContent = `${value === currentValue ? '✓  ' : ''}${label}`;
     item.disabled = Boolean(disabled);
-    item.addEventListener('click', () => { close(); onSelect(value); });
+    item.addEventListener('click', () => { close(true); onSelect(value); });
     menu.append(item);
     return item;
   });
@@ -581,7 +730,7 @@ function openSelectionMenu(anchor, choices, currentValue, onSelect) {
     else if (event.key === 'Tab') { close(); return; }
     if (target) { event.preventDefault(); target.focus(); }
   });
-  document.body.append(menu);
+  (anchor.closest?.('dialog') || document.body).append(menu);
   if (reposition() === false) return;
   document.addEventListener('pointerdown', outside);
   window.addEventListener('scroll', reposition, true);
@@ -622,7 +771,7 @@ function updateSummary(message) {
     else if (row['Decisão'] === 'Usar Arquivo 2' || row['Decisão'] === 'Valor personalizado') use2++;
     else if (row['Decisão'] === 'Manter Arquivo 1') keep1++;
   }
-  $('summary').textContent = `Células diferentes: ${state.report.length}   |   Pendentes: ${pending}   |   Células a alterar: ${use2}   |   Manter Arquivo 1: ${keep1}   |   Linhas novas disponíveis: ${state.newRows}`;
+  $('summary').textContent = `Células em revisão: ${state.report.length}   |   Pendentes: ${pending}   |   Células a alterar: ${use2}   |   Manter Arquivo 1: ${keep1}   |   Linhas novas disponíveis: ${state.newRows}`;
 }
 
 function applyAll() {
@@ -779,6 +928,8 @@ function renderSettings(values = settingsDraft || settings) {
   $('align-first-column').checked = Boolean(values.alignByFirstColumn);
   $('validate-unique-first-column').checked = values.validateUniqueFirstColumn !== false;
   $('replace-filename-dates').checked = values.replaceFilenameDates === true;
+  $('validate-translation-elements').checked = values.validateTranslationElements === true;
+  $('highlight-text-differences').checked = values.highlightTextDifferences === true;
   $('validate-unique-first-column').disabled = !values.alignByFirstColumn;
 }
 $('open-settings').addEventListener('click', () => {
@@ -798,6 +949,8 @@ $('align-first-column').addEventListener('change', (event) => {
 });
 $('validate-unique-first-column').addEventListener('change', (event) => { settingsDraft.validateUniqueFirstColumn = event.target.checked; });
 $('replace-filename-dates').addEventListener('change', (event) => { settingsDraft.replaceFilenameDates = event.target.checked; });
+$('highlight-text-differences').addEventListener('change', (event) => { settingsDraft.highlightTextDifferences = event.target.checked; });
+$('validate-translation-elements').addEventListener('change', (event) => { settingsDraft.validateTranslationElements = event.target.checked; });
 document.querySelectorAll('[data-template]').forEach((button) => button.addEventListener('click', async () => {
   try { const draft = settingsDraft; const file = await window.auditoria.openTemplate(); if (file && draft === settingsDraft) { draft.templates[button.dataset.template] = file.path; renderSettings(); } }
   catch (error) { showError(error); }
@@ -808,12 +961,13 @@ $('save-settings').addEventListener('click', async () => {
   if (button.disabled) return;
   button.disabled = true;
   try {
-    const next = { templates: { ...settingsDraft.templates }, changeColor: $('change-color').value, alignByFirstColumn: $('align-first-column').checked, validateUniqueFirstColumn: $('validate-unique-first-column').checked, replaceFilenameDates: $('replace-filename-dates').checked };
+    const next = { templates: { ...settingsDraft.templates }, changeColor: $('change-color').value, alignByFirstColumn: $('align-first-column').checked, validateUniqueFirstColumn: $('validate-unique-first-column').checked, replaceFilenameDates: $('replace-filename-dates').checked, validateTranslationElements: $('validate-translation-elements').checked, highlightTextDifferences: $('highlight-text-differences').checked };
     const shouldCompare = state.file1 && state.file2 && comparisonRulesChanged(settings, next);
     if (shouldCompare && !await confirmDiscardReview()) return;
     Object.assign(settings, await window.auditoria.saveSettings(next));
     $('settings-dialog').close();
     if (shouldCompare) await compare({ discardConfirmed: true });
+    else renderRows();
     notify('Configurações salvas.');
   }
   catch (error) { showError(error); }

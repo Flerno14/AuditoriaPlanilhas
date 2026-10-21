@@ -33,14 +33,28 @@ function readSession(filePath) {
   }
 }
 
+const writes = new Map();
+
 function writeSession(filePath, session) {
+  // Serialize writes for each destination so concurrent IPC requests cannot
+  // overwrite each other's temporary file. A failed write does not block retry.
+  const destination = path.resolve(filePath);
+  const previous = writes.get(destination) || Promise.resolve();
+  const current = previous.catch(() => {}).then(() => persistSession(destination, session));
+  writes.set(destination, current);
+  const cleanup = () => { if (writes.get(destination) === current) writes.delete(destination); };
+  current.then(cleanup, cleanup);
+  return current;
+}
+
+async function persistSession(filePath, session) {
   validateSession(session);
   const saved = { ...session, savedAt: new Date().toISOString() };
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporary = `${filePath}.tmp`;
   try {
-    fs.writeFileSync(temporary, JSON.stringify(saved), { encoding: 'utf8', flush: true });
-    fs.renameSync(temporary, filePath);
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(temporary, JSON.stringify(saved), { encoding: 'utf8', flush: true });
+    await fs.promises.rename(temporary, filePath);
   } catch (error) {
     throw new Error(`Não foi possível salvar a sessão. Mantenha o aplicativo aberto e tente novamente. ${error.message}`);
   }

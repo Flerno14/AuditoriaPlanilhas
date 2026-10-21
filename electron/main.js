@@ -14,7 +14,7 @@ let pythonStderr = '';
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
 function readSettings() {
   try { return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')); }
-  catch { return { templates: {}, changeColor: '#FFA500', alignByFirstColumn: false, validateUniqueFirstColumn: true, replaceFilenameDates: false }; }
+  catch { return { templates: {}, changeColor: '#FFA500', alignByFirstColumn: false, validateUniqueFirstColumn: true, replaceFilenameDates: false, validateTranslationElements: false, highlightTextDifferences: false }; }
 }
 
 function logPython(message) {
@@ -181,7 +181,7 @@ ipcMain.handle('settings:save', (_event, settings) => {
     const candidate = settings?.templates?.[key];
     templates[key] = typeof candidate === 'string' && path.isAbsolute(candidate) ? candidate : null;
   }
-  const next = { ...current, ...settings, templates, changeColor: color, alignByFirstColumn: settings?.alignByFirstColumn === true, validateUniqueFirstColumn: settings?.validateUniqueFirstColumn !== false, replaceFilenameDates: settings?.replaceFilenameDates === true };
+  const next = { ...current, ...settings, templates, changeColor: color, alignByFirstColumn: settings?.alignByFirstColumn === true, validateUniqueFirstColumn: settings?.validateUniqueFirstColumn !== false, replaceFilenameDates: settings?.replaceFilenameDates === true, validateTranslationElements: settings?.validateTranslationElements === true, highlightTextDifferences: settings?.highlightTextDifferences === true };
   fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2), 'utf8');
   return next;
 });

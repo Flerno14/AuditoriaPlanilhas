@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 // Run the actual renderer handlers with a minimal DOM and mocked desktop API.
-async function createReview({ aligned = false, decision = 'Usar Arquivo 2' } = {}) {
+async function createReview({ aligned = false, decision = 'Usar Arquivo 2', savedSettings = {} } = {}) {
   const elements = new Map();
   function element(id) {
     if (!elements.has(id)) {
@@ -15,11 +15,11 @@ async function createReview({ aligned = false, decision = 'Usar Arquivo 2' } = {
         value: '', checked: false, disabled: false, dataset: {},
         classList: { add() {}, remove() {} },
         addEventListener(name, handler) { listeners[name] = handler; },
-        emit(name) { return listeners[name]?.({ target: this, currentTarget: this, preventDefault() {} }); },
+        emit(name, extra = {}) { return listeners[name]?.({ target: this, currentTarget: this, preventDefault() {}, stopPropagation() {}, ...extra }); },
         focus() {}, getBoundingClientRect() { return this.rect || { left: 20, right: 210, top: 20, bottom: 54, width: 190 }; },
         dispatchEvent(event) { return this.emit(event.type); },
         replaceChildren(...children) { this.children = children; },
-        insertRow() { const row = { cells: [], append(cell) { this.cells.push(cell); }, insertCell() { const listeners = {}; const cell = { append(...children) { this.children = children; }, setAttribute() {}, addEventListener(name, handler) { listeners[name] = handler; }, emit(name, extra = {}) { return listeners[name]?.({ target: this, preventDefault() {}, ...extra }); } }; this.cells.push(cell); return cell; } }; (this.children ||= []).push(row); return row; },
+        insertRow() { const row = { cells: [], append(cell) { this.cells.push(cell); }, insertCell() { const listeners = {}; const cell = { append(...children) { (this.children ||= []).push(...children); }, setAttribute() {}, addEventListener(name, handler) { listeners[name] = handler; }, emit(name, extra = {}) { return listeners[name]?.({ target: this, preventDefault() {}, ...extra }); } }; this.cells.push(cell); return cell; } }; (this.children ||= []).push(row); return row; },
         setAttribute(name, value) { attributes[name] = value; },
         getAttribute(name) { return attributes[name] ?? null; },
         removeAttribute(name) { delete attributes[name]; }, showModal() { this.open = true; },
@@ -34,10 +34,18 @@ async function createReview({ aligned = false, decision = 'Usar Arquivo 2' } = {
   calls.generated = 0;
   controls.preview = { columns: ['ID'], rows: [{ line: 3, values: [2] }] };
   const windowListeners = {};
+  const timers = new Map();
+  let nextTimer = 0;
+  calls.clones = 0;
+  controls.runTimers = (delay) => {
+    for (const [id, timer] of [...timers]) {
+      if (timer.delay === delay) { timers.delete(id); timer.callback(); }
+    }
+  };
   const api = {
     onPythonProgress(callback) { controls.progress = callback; },
     async cancelPython() { calls.cancelled = true; },
-    async getSettings() { return {}; },
+    async getSettings() { return savedSettings; },
     async saveFile() { return 'saved.xlsx'; },
     async getSession() { return controls.session; },
     async clearSession() {
@@ -47,6 +55,7 @@ async function createReview({ aligned = false, decision = 'Usar Arquivo 2' } = {
     async saveSession(session) {
       if (controls.sessionError) throw new Error(controls.sessionError);
       calls.sessions.push(session);
+      if (controls.onSessionSave) await controls.onSessionSave(session);
       return '2026-01-01T00:00:00Z';
     },
     async confirmDiscardReview() { calls.confirmations++; return controls.confirm; },
@@ -87,11 +96,15 @@ async function createReview({ aligned = false, decision = 'Usar Arquivo 2' } = {
       querySelector: (selector) => ({ scrollIntoView() {}, focus() { calls.focused = selector; } }) },
     window: { auditoria: api, addEventListener: (name, handler) => { windowListeners[name] = handler; },
       removeEventListener: (name, handler) => { if (windowListeners[name] === handler) delete windowListeners[name]; },
-      close: () => { calls.closed = true; } }, structuredClone,
+      close: () => { calls.closed = true; } },
+    structuredClone: (value) => { calls.clones++; return structuredClone(value); },
     innerWidth: 1280, innerHeight: 800, Event: class Event { constructor(type) { this.type = type; } },
-    setTimeout: () => 1, clearTimeout() {},
+    setTimeout: (callback, delay) => { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
+    clearTimeout: (id) => timers.delete(id),
     Option: function (text, value) { this.text = text; this.value = value; }
   });
+  vm.runInContext(readFileSync(path.join(__dirname, '../renderer/text-diff.js'), 'utf8'), context);
+  vm.runInContext(readFileSync(path.join(__dirname, '../renderer/translation-validation.js'), 'utf8'), context);
   vm.runInContext(readFileSync(path.join(__dirname, '../renderer/renderer.js'), 'utf8'), context);
   await vm.runInContext('initialization', context);
   vm.runInContext(`
@@ -122,7 +135,7 @@ test('custom popup saves, edits, merges cells, filters and undoes without losing
   r.read('openCustomDecision(0)');
   r.element('custom-value').value = 'João';
   r.element('custom-form').emit('submit');
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
   assert.equal(r.calls.sessions.at(-1).report[0]['Valor personalizado'], 'João');
   r.read('actualRenderRows()');
   assert.equal(r.element('rows').children[0].cells.length, 4);
@@ -341,10 +354,100 @@ test('bulk decisions are automatically saved and closing waits for persistence',
   let prevented = false;
   r.windowListeners.beforeunload({ preventDefault() { prevented = true; } });
   assert.equal(prevented, true);
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
   await Promise.resolve();
   assert.equal(r.calls.sessions.at(-1).report[0]['Decisão'], 'Manter Arquivo 1');
   assert.equal(r.calls.closed, true);
+});
+
+test('rapid decisions and undo debounce to one snapshot containing the latest review', async () => {
+  const r = await createReview({ decision: 'Pendente' });
+  r.read("changeDecisions([0], 'Manter Arquivo 1')");
+  r.read("changeDecisions([0], 'Usar Arquivo 2')");
+  r.read('undoDecision()');
+  assert.equal(r.calls.clones, 0);
+  assert.equal(r.calls.sessions.length, 0);
+  assert.equal(r.read('sessionDirty'), true);
+  r.controls.runTimers(250);
+  await r.read('sessionWrites');
+  assert.equal(r.calls.clones, 1);
+  assert.equal(r.calls.sessions.length, 1);
+  assert.equal(r.calls.sessions[0].report[0]['Decisão'], 'Manter Arquivo 1');
+  assert.equal(r.read('sessionDirty'), false);
+});
+
+test('a slow save keeps one latest pending revision and closing waits for both writes', async () => {
+  const r = await createReview({ decision: 'Pendente' });
+  const releases = [];
+  r.controls.onSessionSave = () => new Promise((resolve) => releases.push(resolve));
+  r.read("changeDecisions([0], 'Manter Arquivo 1')");
+  r.controls.runTimers(250);
+  await Promise.resolve();
+  assert.equal(r.calls.sessions.length, 1);
+  r.read("changeDecisions([0], 'Usar Arquivo 2')");
+  r.read("changeDecisions([0], 'Pendente')");
+  r.read("changeDecisions([0], 'Valor personalizado', 'Última escolha')");
+  assert.equal(r.calls.clones, 1);
+  assert.equal(r.calls.sessions[0].report[0]['Decisão'], 'Manter Arquivo 1');
+  r.windowListeners.beforeunload({ preventDefault() {} });
+  assert.notEqual(r.calls.closed, true);
+  releases[0]();
+  for (let i = 0; i < 10 && releases.length < 2; i++) await Promise.resolve();
+  assert.equal(r.calls.sessions.length, 2);
+  assert.equal(r.calls.clones, 2);
+  assert.equal(r.calls.sessions[1].report[0]['Valor personalizado'], 'Última escolha');
+  assert.equal(r.read('sessionDirty'), true);
+  assert.notEqual(r.calls.closed, true);
+  releases[1]();
+  await r.read('sessionWrites');
+  await Promise.resolve();
+  assert.equal(r.calls.closed, true);
+  assert.equal(r.read('sessionDirty'), false);
+});
+
+test('failure during a slow save retains the latest revision for manual retry', async () => {
+  const r = await createReview({ decision: 'Pendente' });
+  let rejectWrite;
+  r.controls.onSessionSave = () => new Promise((_, reject) => { rejectWrite = reject; });
+  r.read("changeDecisions([0], 'Manter Arquivo 1')");
+  r.controls.runTimers(250);
+  await Promise.resolve();
+  r.read("changeDecisions([0], 'Valor personalizado', 'Mais recente')");
+  rejectWrite(new Error('Disco indisponível'));
+  await r.read('sessionWrites').catch(() => {});
+  assert.equal(r.read('sessionDirty'), true);
+  assert.equal(r.element('error-dialog').open, true);
+  r.controls.onSessionSave = null;
+  r.element('save-session').emit('click');
+  await r.read('sessionWrites');
+  assert.equal(r.calls.sessions.at(-1).report[0]['Valor personalizado'], 'Mais recente');
+  assert.equal(r.read('sessionDirty'), false);
+});
+
+test('failed comparison preserves a debounced review for saving', async () => {
+  const r = await createReview();
+  r.read("changeDecisions([0], 'Manter Arquivo 1')");
+  r.controls.confirm = true;
+  r.controls.compareError = 'Comparação inválida';
+  await r.element('compare').emit('click');
+  r.controls.runTimers(250);
+  await r.read('sessionWrites');
+  assert.equal(r.calls.sessions[0].report[0]['Decisão'], 'Manter Arquivo 1');
+  assert.equal(r.read('sessionDirty'), false);
+});
+
+test('clearing during debounce flushes and cancels the timer before deleting the session', async () => {
+  const r = await createReview();
+  r.controls.confirm = true;
+  r.read("changeDecisions([0], 'Manter Arquivo 1')");
+  await r.element('clear-files').emit('click');
+  const writes = r.calls.sessions.length;
+  assert.equal(writes, 1);
+  assert.equal(r.calls.cleared, true);
+  r.controls.runTimers(250);
+  await Promise.resolve();
+  assert.equal(r.calls.sessions.length, writes);
+  assert.equal(r.read('pendingSessionSnapshot'), null);
 });
 
 test('session write failures keep the window open and allow retry', async () => {
@@ -352,13 +455,13 @@ test('session write failures keep the window open and allow retry', async () => 
   r.controls.sessionError = 'Disco indisponível';
   await r.read('saveReview()').catch(() => {});
   r.windowListeners.beforeunload({ preventDefault() {} });
-  await r.read('sessionWrites').catch(() => {});
+  await r.read('flushSessionWrites()').catch(() => {});
   assert.notEqual(r.calls.closed, true);
   // An unsuccessful new comparison must not prevent retrying the last snapshot.
   r.read('state.comparisonReady = false; state.fingerprint = null');
   r.controls.sessionError = null;
   await r.element('save-session').emit('click');
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
   assert.equal(r.read('sessionDirty'), false);
 });
 
@@ -397,7 +500,7 @@ test('filtered bulk changes only matching rows and persists the untouched decisi
   r.element('bulk-scope').value = 'filtered';
   r.element('bulk-choice').value = 'Usar Arquivo 2';
   r.element('apply').emit('click');
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
   assert.deepEqual(Array.from(r.read("state.report.map(row => row['Decisão'])")),
     ['Usar Arquivo 2', 'Manter Arquivo 1', 'Usar Arquivo 2']);
   assert.equal(r.calls.sessions.at(-1).report[1]['Decisão'], 'Manter Arquivo 1');
@@ -421,7 +524,7 @@ test('case-sensitive search and no matches preserve excluded rows', async () => 
   r.element('apply').emit('click');
   assert.equal(r.read("state.report[0]['Decisão']"), 'Usar Arquivo 2');
   assert.equal(r.read("state.report[1]['Decisão']"), 'Pendente');
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
 });
 
 test('bulk scope all affects every decision even with an active search', async () => {
@@ -432,7 +535,7 @@ test('bulk scope all affects every decision even with an active search', async (
   r.element('bulk-choice').value = 'Manter Arquivo 1';
   r.element('apply').emit('click');
   assert.deepEqual(Array.from(r.read("state.report.map(row => row['Decisão'])")), ['Manter Arquivo 1', 'Manter Arquivo 1']);
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
 });
 
 test('pending decisions block generation and choices export before calling Python', async () => {
@@ -464,7 +567,7 @@ test('decision and column filters intersect with search; undo restores a filtere
   r.element('undo-decision').emit('click');
   assert.equal(r.read("state.report[0]['Decisão']"), 'Pendente');
   assert.equal(r.read("state.report[1]['Decisão']"), 'Manter Arquivo 1');
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
   assert.equal(r.calls.sessions.at(-1).report[0]['Decisão'], 'Pendente');
 });
 
@@ -485,7 +588,7 @@ test('undo reverses individual and bulk actions in order and resets on compariso
   r.controls.confirm = true;
   await r.element('compare').emit('click');
   assert.equal(r.read('undoHistory.length'), 0);
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
 });
 
 test('o menu de decisão mantém a escolha no relatório e permite desfazer', async () => {
@@ -524,7 +627,7 @@ test('double click opens full row details including custom decisions without mod
   const rows = r.element('row-details-rows').children;
   assert.equal(rows.length, 3);
   assert.equal(rows[1].cells[1].textContent, longText);
-  assert.equal(rows[1].cells[3].textContent, 'Valor personalizado:\nMinha escolha');
+  assert.equal(rows[1].cells[3].children[0].textContent, 'Valor personalizado:\nMinha escolha');
   assert.equal(rows[2].cells[2].textContent, '(coluna ausente)');
   assert.match(r.element('row-details-context').textContent, /Arquivo 2: linha 9/);
   r.element('row-details-close').emit('click');
@@ -717,7 +820,7 @@ test('filtered bulk scope and undo include rows outside the visible page', async
   assert.equal(r.read("state.report.filter(row => row['Decisão'] === 'Usar Arquivo 2').length"), 501);
   r.element('undo-decision').emit('click');
   assert.equal(r.read("state.report.filter(row => row['Decisão'] === 'Pendente').length"), 501);
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
 });
 
 test('next pending changes pages and decision filters invalidate cached results', async () => {
@@ -731,7 +834,7 @@ test('next pending changes pages and decision filters invalidate cached results'
   assert.equal(r.read('filteredReportIndices().length'), 0);
   r.element('undo-decision').emit('click');
   assert.equal(r.read('filteredReportIndices().length'), 1);
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
 });
 
 test('progress updates the active loading task and cancellation invokes desktop API', async () => {
@@ -780,7 +883,7 @@ test('swapping files compares once with reversed paths and preserves selected sh
   assert.equal(r.calls.comparisons[0].file2, 'original.xlsx');
   assert.equal(r.calls.comparisons[0].sheet, 'Dados');
   assert.equal(r.element('file1-name').textContent, 'modificado.xlsx');
-  await r.read('sessionWrites');
+  await r.read('flushSessionWrites()');
   assert.equal(r.calls.sessions.at(-1).file1.path, 'modificado.xlsx');
 });
 
@@ -813,4 +916,191 @@ test('Excel dates display and filter as text in the table and new-row preview', 
   r.read(`previewData = {columns: ['Data'], rows: [{line: 3, values: [state.report[0]['Valor no Arquivo 2']]}]}; renderPreview()`);
   assert.equal(r.element('preview-rows').children[0].cells[1].textContent, '2026-10-11 14:30:45');
   assert.equal(r.read("state.report[0]['Valor no Arquivo 2'].__excel_datetime__"), '2026-10-11T14:30:45');
+});
+
+test('translation validation is optional and settings preserve decisions on cancel, failure and save', async () => {
+  const r = await createReview();
+  r.read(`state.report[0]['Valor no Arquivo 1'] = 'Hello {name}'; state.report[0]['Valor no Arquivo 2'] = 'Olá';`);
+  assert.equal(r.read('translationIssues(state.report[0]).length'), 0);
+  r.element('open-settings').emit('click');
+  r.element('validate-translation-elements').checked = true;
+  r.element('cancel-settings').emit('click');
+  assert.equal(r.read('settings.validateTranslationElements'), false);
+  r.element('open-settings').emit('click');
+  r.element('validate-translation-elements').checked = true;
+  r.controls.failSave = true;
+  await r.element('save-settings').emit('click');
+  assert.equal(r.read('settings.validateTranslationElements'), false);
+  r.controls.failSave = false;
+  await r.element('save-settings').emit('click');
+  assert.equal(r.calls.saves.at(-1).validateTranslationElements, true);
+  assert.equal(r.read('state.report'), r.originalReport);
+  assert.equal(r.calls.comparisons.length, 0);
+  assert.equal(r.calls.confirmations, 0);
+  assert.equal(r.read('translationIssues(state.report[0]).length'), 1);
+  r.read('actualRenderRows()');
+  const warning = r.element('rows').children[0].cells[4].children[1];
+  warning.emit('click');
+  assert.equal(r.element('translation-dialog').open, true);
+  assert.match(r.element('translation-warnings').textContent, /\{name\}/);
+  r.element('translation-close').emit('click');
+  assert.equal(r.element('translation-dialog').open, false);
+  assert.equal(r.read("state.report[0]['Decisão']"), 'Usar Arquivo 2');
+});
+
+test('translation warnings follow custom decisions and undo without blocking generation', async () => {
+  const r = await createReview();
+  r.read(`settings.validateTranslationElements = true; state.report[0]['Valor no Arquivo 1'] = '{name}'; state.report[0]['Valor no Arquivo 2'] = 'Nome';`);
+  r.read("changeDecisions([0], 'Manter Arquivo 1')");
+  assert.equal(r.read('translationIssues(state.report[0]).length'), 0);
+  r.read('openCustomDecision(0)');
+  r.element('custom-value').value = 'Olá {name}';
+  r.element('custom-form').emit('submit');
+  assert.equal(r.read('translationIssues(state.report[0]).length'), 0);
+  r.read('undoDecision(); undoDecision()');
+  assert.equal(r.read('translationIssues(state.report[0]).length'), 1);
+  const generating = r.element('generate').emit('click');
+  r.element('generation-confirm').emit('click');
+  await generating;
+  assert.equal(r.calls.generated, 1);
+});
+
+test('row details include literal translation warnings for the current decision', async () => {
+  const r = await createReview();
+  r.read(`settings.validateTranslationElements = true; Object.assign(state.report[0], {'Índice/Linha': 2, 'Nome da Coluna': 'Texto', 'Valor no Arquivo 1': '<b>{name}</b>', 'Valor no Arquivo 2': 'Olá'});`);
+  r.controls.details = { columns: ['Texto'], line1: 2, line2: 2, values1: ['<b>{name}</b>'], values2: ['Olá'], missingColumns2: [] };
+  await r.read('openRowDetails(0)');
+  const review = r.element('row-details-rows').children[0].cells[3].children[0].textContent;
+  assert.match(review, /Avisos de tradução/);
+  assert.match(review, /<b>/);
+  assert.equal(r.read("state.report[0]['Decisão']"), 'Usar Arquivo 2');
+});
+
+test('text highlighting is persisted only on successful settings save without recomparing', async () => {
+  const r = await createReview();
+  assert.equal(r.read('settings.highlightTextDifferences'), false);
+  r.element('open-settings').emit('click');
+  r.element('highlight-text-differences').checked = true;
+  r.element('highlight-text-differences').emit('change');
+  r.element('cancel-settings').emit('click');
+  assert.equal(r.read('settings.highlightTextDifferences'), false);
+  r.element('open-settings').emit('click');
+  r.element('highlight-text-differences').checked = true;
+  r.controls.failSave = true;
+  await r.element('save-settings').emit('click');
+  assert.equal(r.read('settings.highlightTextDifferences'), false);
+  r.controls.failSave = false;
+  await r.element('save-settings').emit('click');
+  assert.equal(r.calls.saves.at(-1).highlightTextDifferences, true);
+  assert.equal(r.read('state.report'), r.originalReport);
+  assert.equal(r.calls.comparisons.length, 0);
+  assert.equal(r.calls.confirmations, 0);
+  const reopened = await createReview({ savedSettings: { highlightTextDifferences: true } });
+  assert.equal(reopened.read('settings.highlightTextDifferences'), true);
+});
+
+test('table highlights literal text and whitespace while keeping original review and custom cells', async () => {
+  const r = await createReview({ savedSettings: { highlightTextDifferences: true } });
+  r.read(`Object.assign(state.report[0], {'Valor no Arquivo 1': '<b>Olá, Ana!</b>', 'Valor no Arquivo 2': '<b>Olá,  Bia?\\n</b>'}); actualRenderRows()`);
+  const text = (node) => node.children?.length ? node.children.map(text).join('') : node.textContent || '';
+  const cells = r.element('rows').children[0].cells;
+  assert.equal(text(cells[2]), '<b>Olá, Ana!</b>');
+  assert.equal(text(cells[3]), '<b>Olá,  Bia?\n</b>');
+  assert.ok(cells[2].children.some((node) => node.className === 'text-diff-removed'));
+  const added = cells[3].children.filter((node) => node.className === 'text-diff-added');
+  assert.ok(added.flatMap((node) => node.children).some((node) => node.dataset.symbol === '↵'));
+  assert.equal(r.read("state.report[0]['Valor no Arquivo 1']"), '<b>Olá, Ana!</b>');
+  assert.equal(r.calls.sessions.length, 0);
+  r.read('openCustomDecision(0)');
+  r.element('custom-value').value = 'Texto personalizado';
+  r.element('custom-form').emit('submit');
+  r.read('actualRenderRows()');
+  assert.equal(r.element('rows').children[0].cells[2].textContent, 'Texto personalizado');
+  assert.equal(r.element('rows').children[0].cells[2].colSpan, 2);
+  r.read('undoDecision(); actualRenderRows()');
+  assert.ok(r.element('rows').children[0].cells[2].children.length);
+  r.read('settings.highlightTextDifferences = false; actualRenderRows()');
+  assert.equal(r.element('rows').children[0].cells[2].textContent, '<b>Olá, Ana!</b>');
+});
+
+test('row popup decisions share undo and autosave and remain available across filters', async () => {
+  const r = await createReview({ decision: 'Pendente' });
+  r.read(`state.report = [
+    {'Índice/Linha': 2, 'Nome da Coluna': 'A', 'Valor no Arquivo 1': '{name}', 'Valor no Arquivo 2': 'novo', 'Decisão': 'Pendente'},
+    {'Índice/Linha': 2, 'Nome da Coluna': 'B', 'Valor no Arquivo 1': 'antes', 'Valor no Arquivo 2': 'depois', 'Decisão': 'Pendente'},
+    {'Índice/Linha': 3, 'Nome da Coluna': 'A', 'Decisão': 'Pendente'}]; settings.validateTranslationElements = true;`);
+  r.controls.details = { columns: ['A', 'B', 'Contexto'], line1: 2, line2: 2, values1: ['{name}', 'antes', 'igual'], values2: ['novo', 'depois', 'igual'], missingColumns2: [] };
+  r.element('filter-decision').value = 'Pendente';
+  await r.read('openRowDetails(0)');
+  const rows = r.element('row-details-rows').children;
+  const status = rows[0].cells[3].children[0];
+  const anchor = rows[0].cells[3].children[1];
+  const buttons = [0, 1, 2, 3].map((index) => ({ emit() { anchor.emit('click'); r.calls.menu.children[index].emit('click'); } }));
+  assert.equal(rows[2].cells[3].children[1].textContent, 'Manter Arquivo 1');
+  buttons[1].emit('click');
+  assert.equal(anchor.textContent, 'Manter Arquivo 1');
+  assert.equal(r.element('row-details-dialog').open, true);
+  assert.equal(r.read("state.report[1]['Decisão']"), 'Pendente');
+  buttons[2].emit('click');
+  assert.match(status.textContent, /Avisos de tradução/);
+  buttons[3].emit('click');
+  r.element('custom-value').value = 'Olá {name}';
+  r.element('custom-form').emit('submit');
+  assert.equal(status.textContent, 'Valor personalizado:\nOlá {name}');
+  assert.equal(r.element('row-details-dialog').open, true);
+  buttons[3].emit('click');
+  r.element('custom-value').value = 'cancelado';
+  r.element('custom-cancel').emit('click');
+  assert.equal(r.read("state.report[0]['Valor personalizado']"), 'Olá {name}');
+  buttons[3].emit('click');
+  r.element('custom-value').value = 'não confirmar';
+  r.element('custom-dialog').emit('keydown', { key: 'Escape' });
+  assert.equal(r.element('custom-dialog').open, false);
+  assert.equal(r.element('row-details-dialog').open, true);
+  assert.equal(r.read("state.report[0]['Valor personalizado']"), 'Olá {name}');
+  buttons[0].emit('click');
+  assert.equal(r.read("state.report[0]['Valor personalizado']"), undefined);
+  r.element('row-details-undo').emit('click');
+  assert.equal(status.textContent, 'Valor personalizado:\nOlá {name}');
+  await r.read('flushSessionWrites()');
+  assert.equal(r.calls.sessions.at(-1).report[0]['Valor personalizado'], 'Olá {name}');
+  assert.equal(r.calls.sessions.at(-1).report[2]['Decisão'], 'Pendente');
+  r.element('row-details-close').emit('click');
+  assert.equal(r.read('rowDecisionView'), null);
+  r.read('undoDecision()');
+  assert.equal(r.read("state.report[0]['Decisão']"), 'Usar Arquivo 2');
+});
+
+test('popup menus edit identical cells lazily, cancel without records, and undo removes manual additions', async () => {
+  const r = await createReview();
+  r.read(`Object.assign(state.report[0], {'Índice/Linha':2,'Nome da Coluna':'Diff'});`);
+  r.controls.details = { columns: ['Same', 'Diff', 'Only'], line1: 2, line2: 2, values1: ['igual', 'a', 'original'], values2: ['igual', 'b', null], missingColumns2: ['Only'] };
+  await r.read('openRowDetails(0)');
+  const rows = r.element('row-details-rows').children;
+  const choose = (row, choice) => { rows[row].cells[3].children[1].emit('click'); r.calls.menu.children[choice].emit('click'); };
+  assert.equal(r.read('state.report.length'), 1);
+  choose(0, 3);
+  r.element('custom-value').value = 'cancelado';
+  r.element('custom-cancel').emit('click');
+  assert.equal(r.read('state.report.length'), 1);
+  choose(0, 3);
+  r.element('custom-value').value = 'novo';
+  r.element('custom-form').emit('submit');
+  await r.read('flushSessionWrites()');
+  assert.equal(r.calls.sessions.at(-1).report[1]['Valor personalizado'], 'novo');
+  assert.equal(r.read('state.report.length'), 2);
+  r.element('row-details-undo').emit('click');
+  assert.equal(r.read('state.report.length'), 1);
+  assert.equal(rows[0].cells[3].children[1].textContent, 'Manter Arquivo 1');
+  choose(0, 3);
+  assert.equal(r.element('custom-value').value, '');
+  r.element('custom-cancel').emit('click');
+  choose(0, 0);
+  assert.equal(r.read("state.report[1]['Decisão']"), 'Pendente');
+  rows[2].cells[3].children[1].emit('click');
+  assert.equal(r.calls.menu.children[2].disabled, true);
+  r.calls.menu.children[3].emit('click');
+  r.element('custom-value').value = 'coluna exclusiva';
+  r.element('custom-form').emit('submit');
+  assert.equal(r.read('state.report.length'), 3);
 });

@@ -36,3 +36,9 @@
 .row-details-table td, .row-details-table th { white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; vertical-align: top; max-width: none; user-select: text; }
 .row-details-table th { vertical-align: middle; }
 .row-details-table .selected-detail { background: #eff7f2; }
+.translation-warning { display: block; margin-top: 5px; border: 1px solid #cfa85a; border-radius: 6px; padding: 4px 8px; background: #fff8e8; color: #725017; font: inherit; font-size: 12px; cursor: pointer; }
+.translation-warning:focus-visible { outline: 2px solid #008e45; outline-offset: 2px; }
+.translation-dialog { width: min(760px, calc(100vw - 48px)); }
+#translation-warnings { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; line-height: 1.6; }
+.row-details-table .decision { white-space: normal; text-align: left; }
+.row-details-table .decision:focus-visible { outline: 2px solid #008e45; outline-offset: 2px; }

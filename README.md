@@ -32,6 +32,8 @@ Para revisões longas, combine a busca com os filtros **Decisão** e **Coluna**.
 
 Dê **duplo clique em uma célula de dados** da tabela para abrir o conteúdo completo da linha. O popup mostra todas as colunas dos dois arquivos lado a lado, com textos completos, números das linhas de origem e decisões atuais. A coluna selecionada fica destacada. Pelo teclado, foque o número da linha e pressione **Enter**. **Voltar à revisão** ou Escape fecha o popup sem alterar decisões, filtros ou página.
 
+Os detalhes e a prévia de linhas novas reutilizam os dados da comparação em um cache local na memória do Python, limitado a um par de abas e a 64 MiB estimados. Isso evita interpretar o Excel novamente a cada abertura. Os conteúdos dos arquivos continuam sendo verificados por SHA-256 em cada consulta; arquivos modificados ou ausentes bloqueiam a exibição. Mudanças de contexto substituem o cache, e dados acima do limite são processados sem ficar armazenados nele.
+
 A tabela mostra 50 diferenças por página por padrão, com opções de 100 ou 250. A busca é aplicada após uma pausa de 200 ms na digitação. Filtros e aplicações em massa abrangem todas as páginas; **Próxima pendência** abre a página do item encontrado. As decisões são mantidas ao navegar. Os resultados dos filtros são reutilizados durante a paginação.
 
 Durante operações Python, a tela de processamento informa a etapa atual e permite **Cancelar processamento**. O cancelamento encerra o processo Python e interrompe todas as solicitações pendentes; a próxima operação inicia um processo novo. A última sessão já salva é preservada. Operações têm limite de 10 minutos, com interrupção real ao excedê-lo. A indicação é por etapas, sem estimativa percentual. A leitura e o relatório completo ainda ficam em memória: a paginação reduz os elementos da tabela, mas não elimina o custo de processar arquivos muito grandes.
@@ -50,7 +52,9 @@ Em **Configurações → Nomes dos arquivos gerados**, ative **Substituir datas 
 
 Alterar a cor de destaque ou os modelos de exportação preserva as decisões da revisão. Mudar o alinhamento das linhas ou a validação de chaves com alinhamento ativo exige uma nova comparação. Se já houver decisões tomadas, o aplicativo pede confirmação antes de descartá-las, inclusive ao comparar novamente ou trocar arquivo/aba. Cancelar mantém a revisão atual.
 
-A última sessão de auditoria é salva automaticamente neste computador após uma comparação válida e a cada decisão, inclusive aplicações em massa. Ao reabrir o aplicativo, os arquivos, a aba, as regras de comparação e as decisões são retomados automaticamente. A faixa de sessão mostra o estado do salvamento; **Salvar sessão** permite tentar novamente após uma falha e **Retomar sessão** repete a recuperação. Uma nova comparação válida substitui a sessão anterior; não há histórico de múltiplas sessões.
+A última sessão de auditoria é salva automaticamente neste computador após uma comparação válida. Decisões, aplicações em massa e desfazer são agrupados por 250 ms sem novas alterações, salvando a revisão mais recente. Se houver uma gravação em andamento, as alterações seguintes são reunidas em uma única revisão pendente. Ao reabrir o aplicativo, os arquivos, a aba, as regras de comparação e as decisões são retomados automaticamente. A faixa de sessão distingue alterações aguardando salvamento, gravação em andamento e revisão salva. **Salvar sessão** salva imediatamente e permite tentar novamente após uma falha; **Retomar sessão** repete a recuperação. Uma nova comparação válida substitui a sessão anterior; não há histórico de múltiplas sessões.
+
+Ao fechar normalmente, o aplicativo antecipa o salvamento pendente e aguarda sua conclusão. Se houver falha, a janela permanece aberta para tentar novamente. A gravação em disco é assíncrona, preservando a substituição do arquivo por uma cópia temporária; encerramentos forçados ainda podem perder alterações não salvas.
 
 Para retomar, os arquivos de origem precisam continuar nos mesmos caminhos e com o mesmo conteúdo. Se forem alterados ou estiverem indisponíveis, o aplicativo exibe um erro e mantém a sessão salva. Restaure os arquivos originais e use **Retomar sessão**, ou selecione os arquivos atuais e faça uma nova comparação. A geração do Excel também verifica se os arquivos mudaram desde a revisão. A sessão fica em `audit-session.json` na pasta de dados do aplicativo do usuário, com os valores das diferenças e decisões, sem enviar dados para serviços externos. O fechamento normal aguarda o salvamento; encerramentos forçados podem perder a última gravação ainda em andamento.
 
@@ -120,3 +124,19 @@ No modo de desenvolvimento, `electron/main.js` inicia `python/bridge.py` usando 
 
 
 
+
+### Verificação opcional de traduções
+
+No popup **Conteúdo completo da linha**, todas as colunas usam o mesmo menu de decisão da tabela: **Manter Arquivo 1**, **Usar Arquivo 2**, **Valor personalizado** e **Pendente**. Células sem diferença começam em Manter Arquivo 1 e só entram na revisão ao confirmar uma escolha; aparecem então na tabela, nos filtros, na sessão e nas exportações. Desfazer essa primeira escolha remove o registro acrescentado. Se a coluna não existir no Arquivo 2, essa opção fica desabilitada; ainda é possível editar um valor personalizado. Escolher explicitamente um valor vazio do Arquivo 2 limpa a célula. O editor personalizado abre sobre o popup; confirmar atualiza a decisão, e cancelar ou Escape preserva a escolha anterior sem acrescentar registros. O contexto da linha continua aberto.
+
+Essas decisões usam o mesmo salvamento automático e histórico da tabela. **Desfazer última decisão** restaura a última ação da revisão, inclusive de outra linha ou uma ação em massa. Fechar o popup não cancela decisões já confirmadas.
+
+Para facilitar a leitura de textos longos, ative **Configurações → Comparação de textos → Destacar trechos diferentes nos textos**. A preferência começa desativada e fica salva neste computador. Na tabela, rosa com sublinhado tracejado indica trechos removidos ou substituídos do Arquivo 1; verde com sublinhado contínuo indica trechos adicionados ou substituídos no Arquivo 2. A legenda identifica os símbolos de espaços, tabulações e quebras de linha alterados. Tags são exibidas literalmente.
+
+Ativar ou desativar preserva as decisões e não refaz a comparação. O destaque é apenas visual, não altera os valores copiados ou gerados e não muda a cor de marcação no Excel. Células personalizadas mantêm sua apresentação centralizada. Em textos muito extensos, o destaque pode abranger blocos maiores e omitir os símbolos individuais de espaços para manter a navegação responsiva.
+
+Em **Configurações → Validação de traduções**, ative **Verificar marcadores, tags e URLs**. A opção fica salva neste computador e começa desativada. Sinaliza elementos removidos ou adicionados, incluindo repetições: marcadores simples (`{name}`, `{0}`, `{{name}}`), formatos como `%s` e `%d`, tags e URLs HTTP/HTTPS ou `www`. Também sinaliza mudanças na ordem das tags e de formatos sem posição explícita.
+
+Na tabela, clique em **aviso(s)** ao lado da decisão para ver os detalhes. Os avisos também aparecem no popup de conteúdo completo da linha. A verificação compara o Arquivo 1 com o Arquivo 2 nas decisões pendentes ou “Usar Arquivo 2”, e com o texto personalizado nessa escolha; “Manter Arquivo 1” não gera avisos. Salvar a opção preserva a revisão, sem refazer a comparação.
+
+Os avisos são orientativos: não alteram decisões nem bloqueiam a geração. A verificação abrange as células da tabela de diferenças, não as linhas novas, e não é exportada nos relatórios. Não valida toda sintaxe de tradução ou a disponibilidade de links; mudanças intencionais também podem gerar avisos.

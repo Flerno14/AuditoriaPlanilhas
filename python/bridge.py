@@ -21,6 +21,28 @@ REPORT_COLUMNS = [
     "Decisão",
 ]
 
+# One normalized pair only; no workbook bytes, decisions or generated files.
+COMPARISON_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_comparison_cache = {}
+
+
+def comparison_frames(first, second, data, fingerprint):
+    key = (str(Path(data['file1']).resolve()), str(Path(data['file2']).resolve()), fingerprint)
+    frames = _comparison_cache.get(key)
+    if frames is not None:
+        return frames
+    _comparison_cache.clear()
+    frames = (
+        core.normalizar_dataframe(core.carregar_excel(first, data['sheet'], 'Arquivo 1')),
+        core.normalizar_dataframe(core.carregar_excel(second, data['sheet'], 'Arquivo 2')),
+    )
+    core.validar_colunas(*frames, bool(data.get('alignByFirstColumn', False)))
+    size = sum(int(frame.memory_usage(index=True, deep=True).sum())
+               + int(frame.columns.memory_usage(deep=True)) for frame in frames)
+    if size <= COMPARISON_CACHE_MAX_BYTES:
+        _comparison_cache[key] = frames
+    return frames
+
 
 def header_id(value):
     """Compare localized report headings regardless of accent or encoding artifacts."""
@@ -139,8 +161,10 @@ def checked_session_files(data):
         first = Path(data['file1']).read_bytes()
         second = Path(data['file2']).read_bytes()
     except OSError as error:
+        _comparison_cache.clear()
         raise ValueError('Não foi possível acessar os arquivos da revisão. Verifique se foram movidos, removidos ou estão indisponíveis.') from error
     if data.get('fingerprint') != session_fingerprint(first, second, data):
+        _comparison_cache.clear()
         raise ValueError('Os arquivos ou as regras mudaram desde a comparação. As decisões antigas não podem ser aplicadas. Compare novamente para iniciar uma nova revisão.')
     return first, second
 
@@ -155,8 +179,9 @@ def execute(action, data):
     report_progress(data, 'Lendo arquivos e verificando a solicitação...')
     if action == 'row-details':
         first, second = checked_session_files(data)
-        details = core.obter_detalhes_linha(
-            first, second, data['sheet'], data['line'],
+        frames = comparison_frames(first, second, data, data['fingerprint'])
+        details = core.obter_detalhes_linha_frames(
+            *frames, data['line'],
             bool(data.get('alignByFirstColumn', False)),
             bool(data.get('validateUniqueFirstColumn', True)),
         )
@@ -166,8 +191,7 @@ def execute(action, data):
     if action == 'preview-new-rows':
         first, second = checked_session_files(data)
         report_progress(data, 'Preparando as linhas novas para visualização...')
-        df1 = core.normalizar_dataframe(core.carregar_excel(first, data['sheet'], 'Arquivo 1'))
-        df2 = core.normalizar_dataframe(core.carregar_excel(second, data['sheet'], 'Arquivo 2'))
+        df1, df2 = comparison_frames(first, second, data, data['fingerprint'])
         aligned = bool(data.get('alignByFirstColumn', False))
         unique = bool(data.get('validateUniqueFirstColumn', True))
         core.validar_colunas(df1, df2, aligned)
@@ -184,16 +208,23 @@ def execute(action, data):
         return core.obter_abas(Path(data["path"]).read_bytes())
 
     if action == "compare":
+        _comparison_cache.clear()
         first = Path(data["file1"]).read_bytes()
         second = Path(data["file2"]).read_bytes()
+        fingerprint = session_fingerprint(first, second, data)
         report_progress(data, 'Validando a estrutura e comparando os dados da aba...')
-        report, new_rows = core.comparar_dataframes(
-            first, second, data["sheet"],
-            alinhar_primeira_coluna=bool(data.get("alignByFirstColumn", False)),
-            validar_chaves_unicas=bool(data.get("validateUniqueFirstColumn", True)),
-        )
+        try:
+            frames = comparison_frames(first, second, data, fingerprint)
+            report, new_rows = core.comparar_frames(
+                *frames,
+                alinhar_primeira_coluna=bool(data.get("alignByFirstColumn", False)),
+                validar_chaves_unicas=bool(data.get("validateUniqueFirstColumn", True)),
+            )
+        except Exception:
+            _comparison_cache.clear()
+            raise
         report_progress(data, 'Preparando as diferenças para a revisão...')
-        return {"report": dataframe_rows(report), "newRows": new_rows, "fingerprint": session_fingerprint(first, second, data)}
+        return {"report": dataframe_rows(report), "newRows": new_rows, "fingerprint": fingerprint}
 
     if action == "export-differences":
         report_progress(data, 'Montando o relatório de diferenças...')
@@ -231,23 +262,23 @@ def execute(action, data):
     raise ValueError(f"Operação desconhecida: {action}")
 
 
-# Electron writes JSON Lines as UTF-8. Set stdin explicitly as well as the
-# output streams: on Windows, stdin may otherwise use the active code page,
-# corrupting localized report keys such as "Índice/Linha" and "Decisão".
-sys.stdin.reconfigure(encoding="utf-8")
-sys.stdout.reconfigure(encoding="utf-8")
-sys.stderr.reconfigure(encoding="utf-8")
+def main():
+    # Electron writes JSON Lines as UTF-8, including localized report keys.
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+    for line in sys.stdin:
+        try:
+            request = {}
+            request = json.loads(line)
+            result = execute(request["action"], request)
+            response = {"id": request["id"], "ok": True, "result": result}
+        except Exception as error:
+            response = {"id": request.get("id"), "ok": False, "error": str(error)}
+        # Keep isolated surrogates safe for the UTF-8 JSON Lines transport.
+        sys.stdout.write(json.dumps(response, ensure_ascii=True, default=json_value) + "\n")
+        sys.stdout.flush()
 
 
-for line in sys.stdin:
-    try:
-        request = {}
-        request = json.loads(line)
-        result = execute(request["action"], request)
-        response = {"id": request["id"], "ok": True, "result": result}
-    except Exception as error:
-        response = {"id": request.get("id"), "ok": False, "error": str(error)}
-    # ASCII escaping keeps isolated surrogates in source cells from breaking
-    # the UTF-8 JSON Lines transport; exports sanitize these values for XLSX.
-    sys.stdout.write(json.dumps(response, ensure_ascii=True, default=json_value) + "\n")
-    sys.stdout.flush()
+if __name__ == '__main__':
+    main()

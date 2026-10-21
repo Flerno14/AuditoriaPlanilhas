@@ -230,6 +230,14 @@ def obter_detalhes_linha(
     """Retorna a linha original e sua correspondente, seguindo o pareamento da comparação."""
     df1 = normalizar_dataframe(carregar_excel(arquivo_1_bytes, sheet_name, "Arquivo 1"))
     df2 = normalizar_dataframe(carregar_excel(arquivo_2_bytes, sheet_name, "Arquivo 2"))
+    return obter_detalhes_linha_frames(df1, df2, linha, alinhar_primeira_coluna, validar_chaves_unicas)
+
+
+def obter_detalhes_linha_frames(
+    df1: pd.DataFrame, df2: pd.DataFrame, linha: int,
+    alinhar_primeira_coluna: bool = False, validar_chaves_unicas: bool = True,
+) -> dict:
+    """Consulta DataFrames já normalizados, sem alterá-los nem reler Excel."""
     validar_colunas(df1, df2, alinhar_primeira_coluna)
     if isinstance(linha, bool) or not isinstance(linha, int) or not 2 <= linha <= len(df1) + 1:
         raise ValueError("Linha inválida para visualizar os detalhes.")
@@ -249,7 +257,7 @@ def obter_detalhes_linha(
         "line1": linha,
         "line2": indice2 + 2,
         "values1": df1.iloc[indice1].tolist(),
-        "values2": df2.reindex(columns=df1.columns).iloc[indice2].tolist(),
+        "values2": df2.iloc[indice2].reindex(df1.columns).tolist(),
         "missingColumns2": [column for column in df1.columns if column not in df2.columns],
     }
 
@@ -287,6 +295,14 @@ def comparar_dataframes(
         carregar_excel(arquivo_2_bytes, sheet_name, "Arquivo 2")
     )
 
+    return comparar_frames(df1, df2, alinhar_primeira_coluna, validar_chaves_unicas)
+
+
+def comparar_frames(
+    df1: pd.DataFrame, df2: pd.DataFrame,
+    alinhar_primeira_coluna: bool = False, validar_chaves_unicas: bool = True,
+) -> tuple[pd.DataFrame, int]:
+    """Compara DataFrames já normalizados sem modificar os dados recebidos."""
     validar_colunas(df1, df2, alinhar_primeira_coluna)
 
     if alinhar_primeira_coluna:
