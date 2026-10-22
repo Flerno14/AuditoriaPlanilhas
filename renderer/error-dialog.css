@@ -1,0 +1,24 @@
+.error-dialog {
+  width: min(640px, calc(100vw - 64px));
+  max-height: calc(100vh - 64px);
+  box-sizing: border-box;
+  overflow-y: auto;
+  border: 1px solid #dce6e0;
+  border-radius: 16px;
+  padding: 28px;
+  color: #193336;
+  background: #fff;
+  box-shadow: 0 16px 64px #183b2633;
+}
+.error-dialog::backdrop { background: #19333680; }
+.error-dialog h2 { margin: 0 0 16px; font-size: 21px; font-weight: 600; }
+.error-dialog p {
+  margin: 0;
+  color: #344b46;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.error-actions { display: flex; justify-content: flex-end; margin-top: 24px; }
+.error-dialog button:focus-visible { outline: 3px solid #193336; outline-offset: 3px; }

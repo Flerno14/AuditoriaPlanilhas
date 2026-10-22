@@ -15,6 +15,7 @@ release/
 
 # Electron / Node.js
 node_modules/
+models/
 npm-debug.log*
 
 # Arquivos temporários do sistema

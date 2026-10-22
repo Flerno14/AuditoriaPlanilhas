@@ -1,0 +1,73 @@
+.navigation-trigger {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid #dce6e0;
+  border-radius: 10px;
+  background: #f1f8f4;
+  cursor: pointer;
+}
+.navigation-trigger:hover { background: #e0f3e8; }
+.navigation-trigger:focus-visible, .navigation-drawer button:focus-visible {
+  outline: 3px solid #008e45;
+  outline-offset: 3px;
+}
+.navigation-drawer {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: min(360px, 90vw);
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
+  padding: 26px 20px;
+  border: 0;
+  border-right: 1px solid #dce6e0;
+  background: #fff;
+  color: #193336;
+  box-shadow: 8px 0 32px #183b2626;
+  transform: translateX(-100%);
+  opacity: 0;
+  transition:
+    transform 260ms cubic-bezier(.22, 1, .36, 1),
+    opacity 260ms ease,
+    display 260ms allow-discrete,
+    overlay 260ms allow-discrete;
+}
+.navigation-drawer[open] { transform: translateX(0); opacity: 1; }
+.navigation-drawer::backdrop {
+  background: #10271e66;
+  opacity: 0;
+  transition: opacity 260ms ease, display 260ms allow-discrete, overlay 260ms allow-discrete;
+}
+.navigation-drawer[open]::backdrop { opacity: 1; }
+@starting-style {
+  .navigation-drawer[open] { transform: translateX(-100%); opacity: 0; }
+  .navigation-drawer[open]::backdrop { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .navigation-drawer, .navigation-drawer::backdrop { transition: none; }
+}
+.navigation-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.navigation-heading h2 { font-size: 20px; margin: 0; }
+.navigation-drawer > p { color: #63746c; margin: 16px 0 24px; }
+.navigation-drawer nav { display: grid; gap: 12px; }
+.navigation-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 16px 12px;
+  border: 1px solid #dce6e0;
+  border-radius: 12px;
+  background: #fff;
+  color: #24463d;
+  font: 600 14px "Segoe UI", Arial, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.navigation-item > span:first-child { font-size: 25px; }
+.navigation-item small { display: block; margin-top: 5px; color: #63746c; font-size: 12px; font-weight: 400; line-height: 1.5; }
+.navigation-item:hover { background: #eff7f2; }
+.navigation-item[aria-current="page"] { background: #e6f5ed; border-color: #00ad4b; color: #007a3c; }

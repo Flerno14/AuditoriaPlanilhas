@@ -1,7 +1,5 @@
-/* The configured accent is for generated workbook cells; keep the action button neutral. */
-.actions #save-changes{border-color:#dce6e0;color:#24463d}
-.actions #save-changes:hover{background:#eff7f2;border-color:#dce6e0}
-.update-actions{display:flex;flex-wrap:wrap;gap:8px}
-.update-actions [hidden],#update-progress[hidden]{display:none}
-#update-progress{width:100%;height:12px;margin:0 0 12px;accent-color:#00ad4b}
-.settings-section .update-note{font-size:12px;margin-top:12px}
+/* The configured highlight color applies only to workbook cells. */
+.mark-changes-option{display:flex;align-items:center;gap:8px;color:#24463d;font-size:13px;cursor:pointer}
+.mark-changes-option input{width:16px;height:16px;margin:0;accent-color:#008e45}
+.mark-changes-option input:focus-visible{outline:2px solid #008e45;outline-offset:3px}
+.preview-dialog.generation-dialog{width:min(520px,calc(100vw - 48px))}

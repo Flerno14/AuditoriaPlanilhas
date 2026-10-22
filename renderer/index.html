@@ -7,29 +7,51 @@
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="filter.css">
   <link rel="stylesheet" href="settings-control.css">
+  <link rel="stylesheet" href="error-dialog.css">
+  <link rel="stylesheet" href="session.css">
+  <link rel="stylesheet" href="review.css">
+  <link rel="stylesheet" href="layout.css">
+  <link rel="stylesheet" href="translation-audit.css">
+  <link rel="stylesheet" href="navigation.css">
+  <link rel="stylesheet" href="popup-motion.css">
 </head>
 <body>
-  <header class="topbar"><span class="brand-mark">▦</span><strong>Planilha</strong><span class="topbar-subtitle">Central de auditoria</span><button class="outline settings-trigger" id="open-settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙ Configurações</button></header>
-  <main class="app-shell" id="app-shell">
-    <div class="eyebrow">AUDITORIA DE PLANILHAS</div>
-    <h1>Compare versões com clareza.</h1>
-    <p class="intro">Revise diferenças, escolha os dados corretos e gere uma planilha corrigida.</p>
+  <header class="topbar"><button type="button" class="brand-mark navigation-trigger" id="open-navigation" aria-label="Abrir menu de auditorias" aria-haspopup="dialog" aria-controls="navigation-drawer" aria-expanded="false" title="Menu de auditorias">▦</button><strong>Planilha</strong><span class="topbar-subtitle" id="active-audit-label">Auditoria de planilhas</span><button class="outline settings-trigger" id="open-settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙ Configurações</button></header>
+  <dialog id="navigation-drawer" class="navigation-drawer" aria-labelledby="navigation-title">
+    <div class="navigation-heading"><h2 id="navigation-title">Central de auditoria</h2><button type="button" class="icon-button" id="close-navigation" aria-label="Fechar menu">×</button></div>
+    <p>Escolha a área de trabalho</p>
+    <nav aria-label="Auditorias">
+      <button type="button" class="navigation-item" id="navigate-sheets" aria-current="page"><span aria-hidden="true">▦</span><span>Auditoria de planilhas<small>Comparar versões e revisar diferenças</small></span></button>
+      <button type="button" class="navigation-item" id="navigate-translations"><span aria-hidden="true">文</span><span>Auditoria de traduções<small>Verificar textos em inglês e português</small></span></button>
+    </nav>
+  </dialog>
+  <main class="app-shell" id="app-shell" data-review-ready="false">
+    <div class="page-heading"><div><div class="eyebrow">AUDITORIA DE PLANILHAS</div><h1>Compare versões com clareza.</h1><p class="intro">Revise diferenças, escolha os dados corretos e gere uma planilha corrigida.</p></div></div>
 
     <section class="card files-card">
-      <div class="file-row"><strong>ARQUIVO 1</strong><button class="outline" id="choose1">Escolher arquivo</button><span class="file-name" id="file1-name">Nenhum arquivo selecionado</span></div>
-      <div class="file-row"><strong>ARQUIVO 2</strong><button class="outline" id="choose2">Escolher arquivo</button><span class="file-name" id="file2-name">Nenhum arquivo selecionado</span></div>
+      <div class="file-pair"><div class="file-row"><strong>Arquivo 1 · Original</strong><span class="file-name" id="file1-name">Nenhum arquivo selecionado</span><button class="outline" id="choose1">Escolher arquivo</button></div>
+      <div class="file-row"><strong>Arquivo 2 · Modificado</strong><span class="file-name" id="file2-name">Nenhum arquivo selecionado</span><button class="outline" id="choose2">Escolher arquivo</button></div></div>
+      <div class="sheet-card"><label for="sheet">Aba da planilha</label><select id="sheet" disabled></select><button class="primary" id="compare">Comparar planilhas</button><div class="file-actions"><button type="button" class="outline compact" id="swap-files">Inverter arquivos 1 e 2</button><button type="button" class="outline compact" id="clear-files" title="Remove as seleções e a sessão salva, sem excluir os arquivos Excel">Limpar arquivos</button></div></div>
+      <p class="hint" id="compare-hint">As linhas são comparadas por posição. Se foram reordenadas, ative “Alinhar pela primeira coluna” nas configurações.</p>
     </section>
-
-    <section class="card sheet-card"><label for="sheet">Aba da planilha</label><select id="sheet" disabled></select><button class="primary" id="compare">Comparar planilhas</button><span class="hint" id="compare-hint">As linhas são comparadas por posição. Se foram reordenadas, ative “Alinhar pela primeira coluna” nas configurações.</span></section>
 
     <section class="card differences-card">
-      <div class="table-toolbar"><strong>Diferenças encontradas</strong><div class="bulk"><label for="bulk-choice">Definir decisão:</label><select id="bulk-choice"><option>Manter Arquivo 1</option><option>Usar Arquivo 2</option></select><button class="outline compact" id="apply">Aplicar</button></div></div>
-      <div class="filter-toolbar"><label class="search-box" for="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Pesquisar diferenças" autocomplete="off"></label><button class="match-case" id="match-case" type="button" aria-pressed="false" aria-label="Diferenciar maiúsculas e minúsculas" title="Diferenciar maiúsculas e minúsculas">Aa</button><span class="filter-count" id="filter-count" aria-live="polite">0 de 0</span><label for="bulk-scope">Aplicar em:</label><select id="bulk-scope"><option value="all">Todas as diferenças</option><option value="filtered">Itens filtrados</option></select></div>
-      <div class="table-wrap"><table><thead><tr><th>Linha</th><th>Coluna</th><th>Arquivo 1 — Original</th><th>Arquivo 2 — Modificado</th><th>Decisão</th></tr></thead><tbody id="rows"><tr class="empty"><td colspan="5">Selecione dois arquivos Excel para começar.</td></tr></tbody></table></div>
+      <div class="table-toolbar"><div><strong>Revisão das diferenças</strong><span class="filter-count" id="filter-count" aria-live="polite">0 de 0</span></div><div class="review-actions"><button type="button" class="outline compact" id="next-pending">Próxima pendência</button><button type="button" class="outline compact" id="undo-decision" disabled>Desfazer</button><button type="button" class="outline compact" id="preview-new-rows">Ver linhas novas</button></div></div>
+      <div class="filter-toolbar"><label class="search-box" for="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Pesquisar diferenças" autocomplete="off"></label><button class="match-case" id="match-case" type="button" aria-pressed="false" aria-label="Diferenciar maiúsculas e minúsculas" title="Diferenciar maiúsculas e minúsculas">Aa</button><label for="filter-decision">Decisão:</label><select id="filter-decision"><option value="">Todas as decisões</option><option>Pendente</option><option>Manter Arquivo 1</option><option>Usar Arquivo 2</option><option>Valor personalizado</option></select><label for="filter-column">Coluna:</label><select id="filter-column"><option value="">Todas as colunas</option></select></div>
+      <details class="tool-section"><summary>Decisão em massa</summary><div class="bulk-panel"><label for="bulk-choice">Definir decisão:</label><select id="bulk-choice"><option>Pendente</option><option>Manter Arquivo 1</option><option>Usar Arquivo 2</option></select><label for="bulk-scope">Aplicar em:</label><select id="bulk-scope"><option value="all">Todas as diferenças</option><option value="filtered">Itens filtrados</option></select><button class="outline compact" id="apply">Aplicar</button></div></details>
+      <p class="row-details-hint">Dê dois cliques em uma célula de dados para visualizar a linha completa. Pelo teclado, foque o número da linha e pressione Enter.</p>
+      <p class="row-details-hint" id="text-diff-legend" hidden><mark class="text-diff-removed">Arquivo 1: removido ou substituído</mark> · <mark class="text-diff-added">Arquivo 2: adicionado ou substituído</mark> · ␠ espaço · ⇥ tabulação · ↵ quebra de linha · ␍ retorno de carro · ⍽ espaço inseparável · ◊ outro caractere invisível</p>
+      <div class="table-wrap"><table><thead><tr><th>Linha</th><th>Coluna</th><th>Arquivo 1 — Original</th><th>Arquivo 2 — Modificado</th><th><div class="decision-heading"><span>Decisão</span><div class="report-actions" role="group" aria-label="Exportar relatórios"><button type="button" class="report-icon" id="export-differences" aria-label="Exportar tabela de diferenças" title="Exportar tabela de diferenças"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="1.5"/><path d="M3 8h14M8 3v14M11 11h3M11 14h3M16 19l3 3 3-3M19 14v8"/></svg></button><button type="button" class="report-icon" id="export-choices" aria-label="Exportar tabela de escolhas" title="Exportar tabela de escolhas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h12v13H4zM7 9l1.5 1.5L11 8M7 14l1.5 1.5L11 13M16 19l3 3 3-3M19 14v8"/></svg></button></div></div></th></tr></thead><tbody id="rows"><tr class="empty"><td colspan="5">Selecione dois arquivos Excel para começar.</td></tr></tbody></table></div>
+    <nav class="card pagination" aria-label="Páginas das diferenças"><label for="page-size">Itens por página:</label><select id="page-size"><option selected>50</option><option>100</option><option>250</option></select><span id="page-status" role="status">Página 1 de 1</span><button type="button" class="outline compact" id="page-previous" disabled>Anterior</button><button type="button" class="outline compact" id="page-next" disabled>Próxima</button></nav>
     </section>
-
-    <section class="card summary" id="summary">Selecione os dois arquivos Excel para começar.</section>
-    <footer class="actions"><button class="outline" id="export-differences">Exportar tabela de diferenças</button><button class="outline" id="export-choices">Exportar tabela de escolhas</button><button class="outline" id="save-changes">Gerar arquivo marcando alterações</button><button class="primary" id="generate">Gerar arquivo corrigido</button></footer>
+    <section class="card summary" id="summary" role="status" aria-live="polite">Selecione os dois arquivos Excel para começar.</section>
+    <footer class="actions">
+      <div class="session-actions" aria-label="Sessão de auditoria">
+        <div class="session-buttons"><button type="button" class="outline compact" id="save-session">Salvar sessão</button><button type="button" class="outline compact" id="resume-session">Retomar sessão</button></div>
+        <span id="session-status" role="status">Verificando sessão salva...</span>
+      </div>
+      <div class="output-actions"><button class="primary" id="generate" aria-haspopup="dialog" aria-controls="generation-dialog">Gerar arquivo corrigido</button></div>
+    </footer>
   </main>
   <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
     <form method="dialog" class="settings-form">
@@ -38,23 +60,69 @@
         <div class="setting-field">Modelo de diferenças</div><div class="template-picker"><span id="template-differences-name">Nenhum modelo selecionado</span><button type="button" class="outline compact" data-template="differences">Escolher arquivo</button><button type="button" class="text-button" data-clear-template="differences">Remover</button></div>
         <div class="setting-field">Modelo de escolhas</div><div class="template-picker"><span id="template-choices-name">Nenhum modelo selecionado</span><button type="button" class="outline compact" data-template="choices">Escolher arquivo</button><button type="button" class="text-button" data-clear-template="choices">Remover</button></div>
       </section>
-      <section class="settings-section"><h3>Marcação das alterações</h3><p>Cor usada para destacar as células alteradas pelo botão “Salvar alterações”.</p><label class="color-setting" for="change-color"><input id="change-color" type="color" value="#FFA500"><span>Cor de destaque</span><code id="change-color-value">#FFA500</code></label></section>
+      <section class="settings-section"><h3>Marcação das alterações</h3><p>Cor usada no arquivo corrigido quando a opção “Marcar células alteradas” está ativada.</p><label class="color-setting" for="change-color"><input id="change-color" type="color" value="#FFA500"><span>Cor de destaque</span><code id="change-color-value">#FFA500</code></label></section>
       <section class="settings-section"><h3>Alinhamento das linhas</h3><p>Use o valor da primeira coluna para comparar registros mesmo quando estiverem em posições diferentes. Valores vazios nessa coluna continuam inválidos para o alinhamento.</p><label class="alignment-setting" for="align-first-column"><input id="align-first-column" type="checkbox"><span>Alinhar pela primeira coluna</span></label><label class="alignment-setting alignment-subsetting" for="validate-unique-first-column"><input id="validate-unique-first-column" type="checkbox" checked><span>Exigir valores únicos na primeira coluna</span></label><p class="setting-note">Com o alinhamento ativo e esta validação desativada, ocorrências repetidas são associadas na ordem em que aparecem.</p></section>
-      <section class="settings-section" aria-labelledby="updates-title"><h3 id="updates-title">Atualizações</h3>
-        <p>Versão atual: <strong id="current-version">Carregando...</strong></p>
-        <p id="update-status" role="status" aria-live="polite">Carregando informações de atualização...</p>
-        <progress id="update-progress" max="100" value="0" aria-label="Progresso do download da atualização" hidden></progress>
-        <div class="update-actions"><button type="button" class="outline" id="check-updates" disabled>Verificar atualizações</button><button type="button" class="primary" id="download-update" hidden>Baixar atualização</button><button type="button" class="primary" id="install-update" hidden>Instalar e reiniciar</button></div>
-        <p class="update-note">Salve seu trabalho antes de instalar. O aplicativo será fechado e reiniciado.</p>
-      </section>
+      <section class="settings-section"><h3>Nomes dos arquivos gerados</h3><label class="alignment-setting" for="replace-filename-dates"><input id="replace-filename-dates" type="checkbox" aria-describedby="filename-date-help"><span>Substituir datas existentes no nome pela data atual</span></label><p id="filename-date-help" class="setting-note">Reconhece datas válidas em AAAAMMDD em qualquer posição do nome, inclusive antes de “corrigido”. Quando ativada, substitui essas datas sem acrescentar outra ao final. Sem uma data reconhecida, ou com a opção desativada, acrescenta a data atual antes da extensão. Aplica-se também aos relatórios exportados.</p></section>
+      <section class="settings-section"><h3>Validação de traduções</h3><label class="alignment-setting" for="validate-translation-elements"><input id="validate-translation-elements" type="checkbox" aria-describedby="translation-help"><span>Verificar marcadores, tags e URLs</span></label><p id="translation-help">Sinaliza diferenças em marcadores simples como {name} e {0}, formatos como %s, tags e endereços HTTP/HTTPS ou www. Compara o Arquivo 1 com o valor em revisão, incluindo valores personalizados. Os avisos não alteram decisões nem bloqueiam a geração. Mudanças intencionais podem gerar avisos; esta verificação não valida todos os formatos de tradução.</p></section>
+      <section class="settings-section"><h3>Comparação de textos</h3><label class="alignment-setting" for="highlight-text-differences"><input id="highlight-text-differences" type="checkbox" aria-describedby="text-diff-help"><span>Destacar trechos diferentes nos textos</span></label><p id="text-diff-help">Na tabela, destaca palavras e pontuação removidas ou substituídas no Arquivo 1 em rosa, e adicionadas ou substituídas no Arquivo 2 em verde. Espaços (␠), tabulações (⇥) e quebras de linha (↵) alterados ficam visíveis. Não modifica os valores nem as decisões.</p></section>
+      <section class="settings-section future-settings"><h3>Mais opções</h3><p>Este espaço está preparado para novas configurações do projeto.</p><div class="future-slot" aria-hidden="true"><span>+</span> Novas preferências poderão ser adicionadas aqui</div></section>
       <div class="settings-actions"><button type="button" class="outline" id="cancel-settings">Cancelar</button><button type="button" class="primary" id="save-settings">Salvar configurações</button></div>
     </form>
   </dialog>
   <div class="loading-overlay" id="loading-overlay" role="status" aria-live="polite" aria-atomic="true" hidden>
-    <div class="loading-card"><span class="loading-spinner" aria-hidden="true"></span><div class="loading-copy"><strong id="loading-message">Processando...</strong><span>Isso pode levar alguns instantes.</span></div><div class="loading-progress" aria-hidden="true"><span></span></div></div>
+    <div class="loading-card"><span class="loading-spinner" aria-hidden="true"></span><div class="loading-copy"><strong id="loading-message">Processando...</strong><span>Isso pode levar alguns instantes.</span></div><div class="loading-progress" aria-hidden="true"><span></span></div><button type="button" class="outline" id="cancel-processing">Cancelar processamento</button></div>
   </div>
+  <dialog class="error-dialog" id="error-dialog" role="alertdialog" aria-labelledby="error-title" aria-describedby="error-description">
+    <h2 id="error-title">Não foi possível concluir a operação</h2>
+    <p id="error-description"></p>
+    <div class="error-actions"><button type="button" class="primary" id="close-error" autofocus>Fechar</button></div>
+  </dialog>
+  <dialog class="preview-dialog translation-dialog" id="translation-dialog" aria-labelledby="translation-title" aria-describedby="translation-context">
+    <h2 id="translation-title">Avisos de tradução</h2><p id="translation-context"></p>
+    <p>Confira se estas mudanças são intencionais. Nenhuma decisão foi alterada e a geração continua disponível.</p>
+    <div id="translation-warnings"></div>
+    <div class="preview-actions"><button type="button" class="primary" id="translation-close" autofocus>Voltar à revisão</button></div>
+  </dialog>
+  <dialog class="preview-dialog row-details-dialog" id="row-details-dialog" aria-labelledby="row-details-title" aria-describedby="row-details-context">
+    <h2 id="row-details-title">Conteúdo completo da linha</h2>
+    <p id="row-details-context"></p>
+    <div class="row-details-table"><table><thead><tr><th scope="col">Coluna</th><th scope="col">Arquivo 1 — Original</th><th scope="col">Arquivo 2 — Modificado</th><th scope="col">Revisão atual</th></tr></thead><tbody id="row-details-rows"></tbody></table></div>
+    <p class="row-details-hint">Clique na decisão de qualquer coluna para alterá-la. Escolhas em células sem diferença também entram na revisão e são salvas automaticamente. Desfazer restaura a última ação da revisão, inclusive de outras linhas.</p>
+    <div class="preview-actions"><button type="button" class="outline" id="row-details-undo" disabled>Desfazer última decisão</button><button type="button" class="primary" id="row-details-close" autofocus>Voltar à revisão</button></div>
+  </dialog>
+  <dialog class="preview-dialog generation-dialog" id="generation-dialog" aria-labelledby="generation-title" aria-describedby="generation-help">
+    <h2 id="generation-title">Gerar arquivo corrigido</h2>
+    <p id="generation-help">As escolhas da revisão serão aplicadas. Se houver linhas novas, você poderá confirmar a prévia antes de incluí-las.</p>
+    <label class="mark-changes-option" for="mark-changes"><input type="checkbox" id="mark-changes"><span>Marcar células alteradas</span></label>
+    <p>A marcação usa a cor definida em Configurações.</p>
+    <div class="preview-actions"><button type="button" class="outline" id="generation-cancel" autofocus>Cancelar</button><button type="button" class="primary" id="generation-confirm">Continuar</button></div>
+  </dialog>
+  <dialog class="preview-dialog" id="preview-dialog" aria-labelledby="preview-title">
+    <h2 id="preview-title">Prévia das linhas novas</h2>
+    <p>Estas linhas serão acrescentadas ao final do arquivo corrigido, nas colunas do Arquivo 1, com ou sem a opção de marcar células alteradas.</p>
+    <p id="preview-count" role="status"></p>
+    <div class="preview-table"><table><thead id="preview-head"></thead><tbody id="preview-rows"></tbody></table></div>
+    <div class="preview-actions"><button type="button" class="outline" id="preview-previous">Página anterior</button><button type="button" class="outline" id="preview-next">Próxima página</button><button type="button" class="outline" id="preview-close" autofocus>Voltar à revisão</button><button type="button" class="primary" id="preview-confirm" hidden>Gerar com estas linhas</button></div>
+  </dialog>
+  <dialog class="custom-dialog" id="custom-dialog" aria-labelledby="custom-title" aria-describedby="custom-context">
+    <form id="custom-form">
+      <h2 id="custom-title">Valor personalizado</h2>
+      <p id="custom-context"></p>
+      <label for="custom-file1">Valor no Arquivo 1</label>
+      <textarea id="custom-file1" rows="3" readonly></textarea>
+      <label for="custom-file2">Valor no Arquivo 2</label>
+      <textarea id="custom-file2" rows="3" readonly></textarea>
+      <label for="custom-value">Valor a usar nos arquivos finais</label>
+      <textarea id="custom-value" rows="4" aria-describedby="custom-help" autofocus></textarea>
+      <p id="custom-help">O valor será salvo como texto. Deixe vazio para limpar a célula. Para editar depois, selecione novamente “Valor personalizado”.</p>
+      <div class="preview-actions"><button type="button" class="outline" id="custom-cancel">Cancelar</button><button type="submit" class="primary">Usar este valor</button></div>
+    </form>
+  </dialog>
   <div class="toast" id="toast" role="status"></div>
+  <script src="text-diff.js"></script>
+  <script src="translation-validation.js"></script>
   <script src="renderer.js"></script>
-  <script src="updates.js"></script>
+  <script src="translation-audit-rules.js"></script>
+  <script src="translation-audit.js"></script>
 </body>
 </html>

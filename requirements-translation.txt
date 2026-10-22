@@ -1,0 +1,3 @@
+# Optional development dependency; weights are installed separately.
+-r requirements.txt
+sentence-transformers>=3,<6

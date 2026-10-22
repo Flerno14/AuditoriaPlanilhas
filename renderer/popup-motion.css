@@ -1,0 +1,41 @@
+/* Keep dialogs in the top layer until their closing transition finishes. */
+dialog:not(.navigation-drawer) {
+  opacity: 0;
+  transform: translateY(10px) scale(.98);
+  transition:
+    opacity 220ms ease,
+    transform 220ms cubic-bezier(.22, 1, .36, 1),
+    display 220ms allow-discrete,
+    overlay 220ms allow-discrete;
+}
+dialog:not(.navigation-drawer)[open] {
+  opacity: 1;
+  transform: none;
+}
+dialog:not(.navigation-drawer):not([open]) { pointer-events: none; }
+dialog:not(.navigation-drawer)::backdrop {
+  opacity: 0;
+  transition: opacity 220ms ease, display 220ms allow-discrete, overlay 220ms allow-discrete;
+}
+dialog:not(.navigation-drawer)[open]::backdrop { opacity: 1; }
+
+.loading-overlay {
+  opacity: 1;
+  transition: opacity 220ms ease, display 220ms allow-discrete;
+}
+.loading-overlay[hidden] { opacity: 0; pointer-events: none; }
+
+@starting-style {
+  dialog:not(.navigation-drawer)[open] {
+    opacity: 0;
+    transform: translateY(10px) scale(.98);
+  }
+  dialog:not(.navigation-drawer)[open]::backdrop { opacity: 0; }
+  .loading-overlay:not([hidden]) { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog:not(.navigation-drawer),
+  dialog:not(.navigation-drawer)::backdrop,
+  .loading-overlay { transition: none; }
+}
