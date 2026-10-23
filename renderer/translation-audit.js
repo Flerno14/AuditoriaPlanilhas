@@ -31,13 +31,14 @@
       <label for="ta-alert-filter">Alerta:</label><select id="ta-alert-filter"><option value="">Todos os alertas</option><option value="__none__">Sem alertas</option></select>
     </div>
     <details class="tool-section"><summary>Revisão em massa</summary><div class="bulk-panel"><label for="ta-bulk-choice">Definir revisão:</label><select id="ta-bulk-choice"><option>Não revisado</option><option>Revisado</option><option>Precisa corrigir</option></select><label for="ta-bulk-scope">Aplicar em:</label><select id="ta-bulk-scope"><option value="all">Todas as traduções</option><option value="filtered">Itens filtrados</option></select><button type="button" class="outline compact" id="ta-bulk-apply" disabled>Aplicar</button></div><p class="row-details-hint">A aplicação inclui todas as páginas do escopo escolhido.</p></details>
+    <details class="tool-section" id="ta-replace-section"><summary>Substituir texto nos itens filtrados</summary><div class="bulk-panel translation-replace-panel"><label for="ta-replace-find">Localizar na tradução:</label><input id="ta-replace-find" type="text" placeholder="Screenshot" autocomplete="off"><label for="ta-replace-with">Substituir por:</label><input id="ta-replace-with" type="text" placeholder="Captura de tela" autocomplete="off"><button type="button" class="outline compact" id="ta-replace-apply" disabled>Substituir nos filtrados</button></div><p class="row-details-hint">Substitui todas as ocorrências exatas, distinguindo maiúsculas e minúsculas, somente no texto em português dos itens filtrados de todas as páginas. O restante do texto é preservado. Deixe o novo valor vazio para remover o trecho. Linhas alteradas ficam como Revisado.</p><p id="ta-replace-status" class="row-details-hint" role="status"></p></details>
     <p class="row-details-hint">Dê dois cliques em uma célula ou use Ver linha para visualizar o conteúdo completo.</p>
-    <div class="table-wrap"><table><thead><tr><th>Linha / ID</th><th>Inglês</th><th>Português</th><th>Proximidade</th><th>Prioridade / alertas</th><th>Revisão</th></tr></thead><tbody id="ta-rows"></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Linha / ID</th><th>Inglês</th><th>Português</th><th>Proximidade</th><th>Prioridade / alertas</th><th>Editar</th><th>Revisão</th></tr></thead><tbody id="ta-rows"></tbody></table></div>
     <nav class="pagination" aria-label="Páginas da auditoria"><label for="ta-page-size">Itens por página:</label><select id="ta-page-size"><option selected>50</option><option>100</option><option>250</option></select><span id="ta-page" role="status"></span><div class="review-actions"><button id="ta-prev" class="outline compact">Anterior</button><button id="ta-next" class="outline compact">Próxima</button></div></nav>
     </section>
     <div class="summary" id="translation-summary" role="status">Nenhuma análise realizada.</div>
-    <footer class="actions"><div class="session-actions" aria-label="Sessão de auditoria de traduções"><div class="session-buttons"><button id="ta-save" class="outline compact">Salvar sessão</button><button id="ta-restore" class="outline compact">Retomar sessão</button></div></div><div class="output-actions"><button id="ta-export" class="primary" disabled>Exportar relatório</button></div></footer>
-    <dialog id="translation-detail" aria-labelledby="ta-detail-title"><h2 id="ta-detail-title">Conteúdo completo</h2><h3>Inglês</h3><pre id="ta-detail-source"></pre><h3>Português</h3><pre id="ta-detail-target"></pre><p id="ta-detail-issues"></p><button id="ta-detail-close" class="primary">Fechar</button></dialog>`;
+    <footer class="actions"><div class="session-actions" aria-label="Sessão de auditoria de traduções"><div class="session-buttons"><button id="ta-save" class="outline compact">Salvar sessão</button><button id="ta-restore" class="outline compact">Retomar sessão</button></div></div><div class="output-actions"><button id="ta-export" class="outline compact" disabled>Exportar relatório</button><button id="ta-generate" class="primary" disabled>Gerar traduções corrigidas</button></div></footer>
+    <dialog id="translation-detail" aria-labelledby="ta-detail-title"><h2 id="ta-detail-title">Conteúdo completo</h2><h3>Inglês</h3><pre id="ta-detail-source"></pre><h3>Português original</h3><pre id="ta-detail-target"></pre><p id="ta-detail-issues"></p><label for="ta-replacement">Valor para substituir a tradução</label><textarea id="ta-replacement" rows="6" maxlength="32767"></textarea><p class="hint">Texto vazio limpa a célula. O valor é literal, inclusive quando começa com =.</p><div class="review-actions"><button id="ta-replacement-save" class="primary">Confirmar substituição</button><button id="ta-replacement-reset" class="outline">Restaurar original</button><button id="ta-detail-close" class="outline">Fechar / cancelar edição</button></div></dialog>`;
   document.querySelector('.topbar').after(screen);
   const get = (id) => document.getElementById(id);
   const toggle = get('open-navigation');
@@ -98,7 +99,8 @@
     for (const id of ['ta-file', 'ta-model', 'ta-clear-model', 'ta-sheet', 'ta-source', 'ta-target', 'ta-identifier', 'ta-run', 'ta-restore', 'ta-save']) get(id).disabled = value || (!file && !['ta-file', 'ta-model', 'ta-clear-model', 'ta-restore'].includes(id));
     get('ta-cancel').disabled = !value;
     get('ta-export').disabled = value || !rows.length;
-    get('ta-rows').querySelectorAll('select').forEach((select) => { select.disabled = value; });
+    get('ta-generate').disabled = value || !rows.some((row) => typeof row.replacement === 'string');
+    get('ta-rows').querySelectorAll('select, button').forEach((control) => { control.disabled = value; });
     updateBulkControls();
     toggle.disabled = value;
   }
@@ -166,10 +168,15 @@
     return rows.filter((row) => (!get('ta-priority').value || row.priority === get('ta-priority').value)
       && (!get('ta-review-filter').value || row.review === get('ta-review-filter').value)
       && TranslationAuditRules.matchesAlert(row, get('ta-alert-filter').value)
-      && (!query || normalize([row.line, row.identifier, row.source, row.target, ...row.issues].join(' ')).includes(query)))
+      && (!query || normalize([row.line, row.identifier, row.source, row.target, TranslationAuditRules.effectiveTarget(row), ...row.issues].join(' ')).includes(query)))
       .sort((a, b) => order[a.priority] - order[b.priority] || (a.score ?? 2) - (b.score ?? 2) || a.line - b.line);
   }
+  let detailRow = null;
   function detail(row) {
+    if (busy) return;
+    detailRow = row;
+    get('ta-replacement').value = TranslationAuditRules.effectiveTarget(row);
+    get('ta-replacement-reset').disabled = typeof row.replacement !== 'string';
     get('ta-detail-title').textContent = `Linha ${row.line}${row.identifier ? ` · ${row.identifier}` : ''}`;
     get('ta-detail-source').textContent = row.source; get('ta-detail-target').textContent = row.target;
     get('ta-detail-issues').textContent = row.issues.join('\n') || 'Nenhum alerta objetivo. A revisão humana continua necessária.';
@@ -188,35 +195,59 @@
     get('ta-count').textContent = `${list.length} de ${rows.length}`;
     if (!list.length) {
       const tr = document.createElement('tr'), td = document.createElement('td');
-      tr.className = 'empty'; td.colSpan = 6;
+      tr.className = 'empty'; td.colSpan = 7;
       td.textContent = rows.length ? 'Nenhuma tradução corresponde aos filtros.' : 'Selecione uma planilha e analise as traduções para começar.';
       tr.append(td); get('ta-rows').append(tr);
     }
     for (const row of list.slice(page * pageSize, (page + 1) * pageSize)) {
       const tr = document.createElement('tr');
-      for (const value of [`${row.line}\n${row.identifier}`, row.source, row.target, row.score === null ? 'Não calculada' : row.score.toFixed(3), `${row.priority}\n${row.issues.join('\n')}`]) {
+      for (const value of [`${row.line}\n${row.identifier}`, row.source, TranslationAuditRules.effectiveTarget(row), row.score === null ? 'Não calculada' : row.score.toFixed(3), `${row.priority}\n${row.issues.join('\n')}`]) {
         const td = document.createElement('td'), content = document.createElement('div'); content.className = 'translation-text'; content.textContent = value;
         td.append(content); td.ondblclick = () => detail(row); tr.append(td);
       }
       const button = document.createElement('button'); button.textContent = 'Ver linha'; button.className = 'outline'; button.onclick = () => detail(row); tr.cells[0].append(button);
+      const editCell = document.createElement('td'), edit = document.createElement('button');
+      edit.textContent = 'Editar'; edit.className = 'outline'; edit.disabled = busy;
+      edit.setAttribute('aria-label', `Editar tradução da linha ${row.line}`);
+      edit.title = typeof row.replacement === 'string' ? 'Editar substituição' : 'Substituir tradução';
+      edit.onclick = () => detail(row); editCell.append(edit); tr.append(editCell);
       const td = document.createElement('td'), select = document.createElement('select'); select.setAttribute('aria-label', `Revisão da linha ${row.line}`);
       for (const value of ['Não revisado', 'Revisado', 'Precisa corrigir']) select.add(new Option(value, value));
       select.value = row.review; select.disabled = busy; select.onchange = () => { row.review = select.value; changed(); render(); };
       td.append(select); tr.append(td); get('ta-rows').append(tr);
       enhanceNativeSelect(select);
     }
-    get('translation-summary').textContent = `${rows.length} linhas · ${rows.filter((row) => row.priority === 'Alta').length} de prioridade alta · ${rows.filter((row) => row.review !== 'Não revisado').length} revisadas · ${list.length} no filtro · ${rows.filter((row) => row.score !== null).length} com proximidade calculada`;
+    get('translation-summary').textContent = `${rows.length} linhas · ${rows.filter((row) => typeof row.replacement === 'string').length} substituições · ${rows.filter((row) => row.priority === 'Alta').length} de prioridade alta · ${rows.filter((row) => row.review !== 'Não revisado').length} revisadas · ${list.length} no filtro · ${rows.filter((row) => row.score !== null).length} com proximidade calculada`;
     get('ta-page').textContent = `Página ${page + 1} de ${pages}`;
     get('ta-prev').disabled = page === 0; get('ta-next').disabled = page + 1 >= pages;
     get('ta-export').disabled = busy || !rows.length;
+    get('ta-generate').disabled = busy || !rows.some((row) => typeof row.replacement === 'string');
     updateBulkControls(list);
   }
   function updateBulkControls(list) {
+    for (const id of ['ta-replace-find', 'ta-replace-with']) get(id).disabled = busy || !rows.length;
+    get('ta-replace-apply').disabled = busy || !rows.length || !get('ta-replace-find').value || !(list || filtered()).length;
     for (const id of ['ta-bulk-choice', 'ta-bulk-scope']) get(id).disabled = busy || !rows.length;
     const targets = get('ta-bulk-scope').value === 'filtered' ? (list || filtered()) : rows;
     get('ta-bulk-apply').disabled = busy || !targets.length;
   }
   get('ta-bulk-scope').addEventListener('change', () => updateBulkControls());
+  get('ta-replace-find').addEventListener('input', () => updateBulkControls());
+  get('ta-replace-section').addEventListener('toggle', () => {
+    if (get('ta-replace-section').open && !get('ta-replace-find').value) {
+      get('ta-replace-find').value = get('ta-search').value;
+      updateBulkControls();
+    }
+  });
+  get('ta-replace-apply').onclick = () => {
+    if (busy) return;
+    const targets = filtered();
+    try {
+      const count = TranslationAuditRules.replaceFiltered(targets, get('ta-replace-find').value, get('ta-replace-with').value);
+      if (count) { TranslationAuditRules.rank(rows); changed(); cursor = -1; render(); }
+      get('ta-replace-status').textContent = count ? `${count} traduções alteradas e marcadas como Revisado.` : 'Nenhuma ocorrência alterada nas traduções dos itens filtrados.';
+    } catch (error) { showError(error); }
+  };
   get('ta-bulk-apply').onclick = () => {
     if (busy) return;
     const targets = get('ta-bulk-scope').value === 'filtered' ? filtered() : rows;
@@ -224,6 +255,22 @@
     if (count) { changed(); cursor = -1; render(); }
     notify(count ? `${count} traduções atualizadas.` : 'Nenhuma revisão precisou ser alterada.');
   };
+  function commitReplacement(reset = false) {
+    if (busy || !detailRow) return;
+    TranslationAuditRules.replaceTarget(detailRow, reset ? undefined : get('ta-replacement').value);
+    TranslationAuditRules.rank(rows); changed(); cursor = -1; render();
+    get('translation-detail').close();
+  }
+  get('ta-replacement-save').onclick = () => commitReplacement();
+  get('ta-replacement-reset').onclick = () => commitReplacement(true);
+  get('translation-detail').addEventListener('close', () => { detailRow = null; });
+  get('ta-generate').onclick = () => task(async () => {
+    if (!context) return;
+    const edits = rows.filter((row) => typeof row.replacement === 'string').map(({ line, replacement }) => ({ line, replacement }));
+    const result = await api.callPython('translation-generate', { path: context.file.path, sheet: context.sheet, source: context.source, target: context.target, fingerprint: context.fingerprint, edits });
+    const ext = /\.xlsm$/i.test(context.file.name) ? '.xlsm' : '.xlsx';
+    await saveContent(`${context.file.name.replace(/\.[^.]+$/, '')}_corrigido${ext}`, result.content, 'Traduções corrigidas salvas');
+  });
   get('ta-detail-close').onclick = () => get('translation-detail').close();
   get('ta-prev').onclick = () => { page--; render(); }; get('ta-next').onclick = () => { page++; render(); };
   get('ta-page-size').addEventListener('change', () => { page = 0; cursor = -1; render(); });
