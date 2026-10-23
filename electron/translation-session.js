@@ -9,6 +9,7 @@ function validateTranslationSession(session) {
         || !['source', 'target', 'identifier'].every((key) => typeof row[key] === 'string')
         || !(row.score === null || (Number.isFinite(row.score) && Math.abs(row.score) <= 1.001))
         || (row.semanticIssue !== undefined && typeof row.semanticIssue !== 'string')
+        || (row.replacement !== undefined && typeof row.replacement !== 'string')
         || !['Não revisado', 'Revisado', 'Precisa corrigir'].includes(row.review)) throw new Error('Linha inválida na sessão de tradução.');
   }
   return session;

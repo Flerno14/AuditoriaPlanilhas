@@ -1,4 +1,4 @@
-"""Read-only translation audit; optional local model, never downloads weights."""
+"""Local translation audit and corrected copies; never downloads weights."""
 import base64
 import hashlib
 from contextlib import redirect_stdout
@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 import app_corrigido as core
 
 _model = None
@@ -48,15 +48,18 @@ def execute(action, data):
         return {'rows': rows, 'fingerprint': fingerprint}
     if action == 'translation-semantic':
         return semantic(data)
+    if action == 'translation-generate':
+        return generate(data)
     if action == 'translation-export':
         book = Workbook()
         sheet = book.active
         sheet.title = 'Auditoria de tradução'
         sheet.append(['Linha', 'Identificação', 'Inglês', 'Português', 'Similaridade (cosseno)',
-                      'Prioridade', 'Alertas', 'Revisão', 'Modelo'])
+                      'Prioridade', 'Alertas', 'Revisão', 'Modelo', 'Substituir tradução', 'Valor escolhido'])
         for row in data['rows']:
             sheet.append([row['line'], row['identifier'], row['source'], row['target'], row.get('score'),
-                          row['priority'], '\n'.join(row['issues']), row['review'], data.get('model', 'Sem análise semântica')])
+                          row['priority'], '\n'.join(row['issues']), row['review'], data.get('model', 'Sem análise semântica'),
+                          'Sim' if 'replacement' in row else 'Não', row.get('replacement', row['target'])])
             for cell in sheet[sheet.max_row]:
                 if isinstance(cell.value, str):
                     cell.value = core.sanitizar_texto_excel(cell.value)
@@ -68,6 +71,38 @@ def execute(action, data):
         book.close()
         return {'content': base64.b64encode(output.getvalue()).decode('ascii')}
     raise ValueError('Operação de auditoria desconhecida.')
+
+
+def generate(data):
+    raw = Path(data['path']).read_bytes()
+    if not data.get('fingerprint') or hashlib.sha256(raw).hexdigest() != data['fingerprint']:
+        raise ValueError('A planilha mudou desde a análise. Selecione novamente o arquivo.')
+    frame = core.normalizar_dataframe(core.carregar_excel(raw, data['sheet'], 'arquivo de tradução'))
+    if data['source'] == data['target'] or any(name not in frame.columns for name in [data['source'], data['target']]):
+        raise ValueError('Selecione duas colunas diferentes para inglês e português.')
+    edits = data.get('edits')
+    if not isinstance(edits, list):
+        raise ValueError('Substituições inválidas.')
+    seen = set()
+    for edit in edits:
+        line, value = edit.get('line'), edit.get('replacement')
+        if type(line) is not int or line < 2 or line > len(frame) + 1 or line in seen or not isinstance(value, str) or len(value) > 32767:
+            raise ValueError('Substituição de tradução inválida.')
+        seen.add(line)
+    book = load_workbook(BytesIO(raw), keep_vba=Path(data['path']).suffix.lower() == '.xlsm')
+    try:
+        sheet = book[data['sheet']]
+        column = list(frame.columns).index(data['target']) + 1
+        for edit in edits:
+            cell = sheet.cell(edit['line'], column)
+            cell.value = core.sanitizar_texto_excel(edit['replacement']) if edit['replacement'] else None
+            if cell.value is not None:
+                cell.data_type = 's'
+        output = BytesIO()
+        book.save(output)
+        return {'content': base64.b64encode(output.getvalue()).decode('ascii')}
+    finally:
+        book.close()
 
 
 def semantic(data):

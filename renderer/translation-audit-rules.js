@@ -22,6 +22,7 @@ const TranslationAuditRules = (() => {
     }).sort().join('|');
   }
   function inspect(row) {
+    row = { ...row, target: effectiveTarget(row) };
     const a = row.source.trim(), b = row.target.trim();
     const issues = validation.check(row.source, row.target);
     let priority = 'Sem alerta objetivo';
@@ -72,6 +73,28 @@ const TranslationAuditRules = (() => {
     }
     return count;
   }
-  return { inspect, rank, alertType, matchesAlert, applyReview };
+  function effectiveTarget(row) {
+    return typeof row.replacement === 'string' ? row.replacement : row.target;
+  }
+  function replaceTarget(row, value) {
+    if (value === undefined) delete row.replacement;
+    else row.replacement = value;
+    row.score = null;
+    row.semanticIssue = 'Tradução editada: proximidade não recalculada.';
+    row.review = value === undefined ? 'Não revisado' : 'Revisado';
+  }
+  function replaceFiltered(rows, find, replacement) {
+    if (!find) return 0;
+    const changes = rows.map((row) => {
+      const current = effectiveTarget(row);
+      return { row, current, value: current.split(find).join(replacement) };
+    }).filter(({ current, value }) => current !== value);
+    if (changes.some(({ value }) => value.length > 32767)) {
+      throw new Error('A substituição excede o limite de 32.767 caracteres em uma tradução. Nenhum valor foi alterado.');
+    }
+    for (const { row, value } of changes) replaceTarget(row, value);
+    return changes.length;
+  }
+  return { inspect, rank, alertType, matchesAlert, applyReview, effectiveTarget, replaceTarget, replaceFiltered };
 })();
 if (typeof module !== 'undefined') module.exports = TranslationAuditRules;

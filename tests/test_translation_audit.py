@@ -52,6 +52,43 @@ class TranslationAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'pasta local'):
             bridge.execute('translation-semantic', {'modelPath': self.folder.name, 'rows': []})
 
+    def test_generate_changes_only_selected_translation_cells(self):
+        book = load_workbook(self.path)
+        book.active['B3'] = '=1+1'
+        book.active['C2'].number_format = '@'
+        book.create_sheet('Other')['A1'] = 'Preserved'
+        book.save(self.path)
+        book.close()
+        original = self.path.read_bytes()
+        info = bridge.execute('translation-columns', self.data)
+        data = {**self.data, 'source': 'English', 'target': 'Português', 'fingerprint': info['fingerprint'],
+                'edits': [{'line': 2, 'replacement': '=literal'}, {'line': 4, 'replacement': ''}]}
+        result = bridge.execute('translation-generate', data)
+        book = load_workbook(BytesIO(base64.b64decode(result['content'])))
+        self.assertEqual(book['Sheet']['C2'].value, '=literal')
+        self.assertEqual(book['Sheet']['C2'].data_type, 's')
+        self.assertEqual(book['Sheet']['C2'].number_format, '@')
+        self.assertIsNone(book['Sheet']['C4'].value)
+        self.assertEqual(book['Sheet']['B3'].value, '=1+1')
+        self.assertEqual(book['Other']['A1'].value, 'Preserved')
+        self.assertEqual(self.path.read_bytes(), original)
+        book.close()
+        for override in [{'fingerprint': '0' * 64}, {'target': 'English'},
+                         {'edits': [{'line': 99, 'replacement': 'bad'}]},
+                         {'edits': [{'line': 2, 'replacement': None}]}]:
+            with self.assertRaises(ValueError):
+                bridge.execute('translation-generate', {**data, **override})
+
+    def test_export_includes_explicit_empty_replacement(self):
+        row = {'line': 2, 'identifier': '', 'source': 'Hello', 'target': 'Olá', 'replacement': '',
+               'score': None, 'priority': 'Alta', 'issues': [], 'review': 'Não revisado'}
+        result = bridge.execute('translation-export', {'rows': [row]})
+        book = load_workbook(BytesIO(base64.b64decode(result['content'])))
+        self.assertEqual(book.active['D2'].value, 'Olá')
+        self.assertEqual(book.active['J2'].value, 'Sim')
+        self.assertIsNone(book.active['K2'].value)
+        book.close()
+
     def test_semantic_skips_empty_and_over_limit_without_truncating(self):
         folder = Path(self.folder.name)
         (folder / 'modules.json').write_text('[]')
